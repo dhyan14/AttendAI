@@ -6,14 +6,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
-from passlib.context import CryptContext
+import bcrypt
 
 from app.database import get_db
 from app.models import Student, User, UserRole, Department
 from app.api.deps import get_current_user, require_dept_admin
 
 router = APIRouter()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def hash_password(password: str) -> str:
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")
 
 
 # ─── Schemas ───────────────────────────────────────────────
@@ -95,7 +98,7 @@ async def create_student(
     # Create user account
     user = User(
         email=data.email,
-        password_hash=pwd_context.hash("Student@123"),  # Default password
+        password_hash=hash_password("Student@123"),  # Default password
         role=UserRole.student,
         org_id=current_user.org_id,
     )
@@ -171,7 +174,7 @@ async def import_students_csv(
 
             user = User(
                 email=email,
-                password_hash=pwd_context.hash("Student@123"),
+                password_hash=hash_password("Student@123"),
                 role=UserRole.student,
                 org_id=current_user.org_id,
             )
