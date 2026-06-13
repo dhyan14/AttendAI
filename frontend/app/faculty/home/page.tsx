@@ -11,12 +11,12 @@ interface Lecture {
   subject_code: string;
   division: string;
   batch: string;
-  lecture_no: int;
+  lecture_no: number;
   date: string;
   time: string;
   status: string;
-  total_students: int;
-  present_count: int;
+  total_students: number;
+  present_count: number;
 }
 
 export default function FacultyHomePage() {
