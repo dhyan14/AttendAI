@@ -121,7 +121,7 @@ export default function StudentAttendancePage() {
                   style={{
                     aspectRatio: "1", borderRadius: 99, border: "none", cursor: "pointer",
                     fontSize: 13, fontWeight: isSel ? 700 : 400, transition: "all 0.15s",
-                    display: "flex", flexDirection: "column", alignItems: "center", justifyOrdering: "center",
+                    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
                     background: isSel ? "var(--accent)" :
                       status === "present" ? "var(--success-dim)" :
                       status === "absent" ? "var(--danger-dim)" :
