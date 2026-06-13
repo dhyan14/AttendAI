@@ -263,9 +263,9 @@ class FaceEmbedding(Base):
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
-    action = Column(String, nullable=False)
-    resource = Column(String)
-    metadata = Column(JSON)
+    id         = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    actor_id   = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    action     = Column(String, nullable=False)
+    resource   = Column(String)
+    log_data   = Column(JSON)   # renamed from 'metadata' (reserved by SQLAlchemy)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
