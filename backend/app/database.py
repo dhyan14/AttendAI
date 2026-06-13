@@ -2,24 +2,32 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.orm import DeclarativeBase
 from app.config import settings
 
+_engine = None
+_session_factory = None
+
 
 def get_engine():
-    if not settings.DATABASE_URL:
-        raise RuntimeError("DATABASE_URL environment variable is not set in Railway!")
-    return create_async_engine(
-        settings.DATABASE_URL,
-        pool_size=10,
-        max_overflow=20,
-        echo=settings.APP_ENV == "development",
-    )
-
-engine = get_engine()
-
-AsyncSessionLocal = async_sessionmaker(
-    engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-)
+    """Lazy engine creation - only connects when first needed."""
+    global _engine, _session_factory
+    if _engine is None:
+        if not settings.DATABASE_URL:
+            raise RuntimeError(
+                "DATABASE_URL is not set! "
+                "Add it to Railway environment variables."
+            )
+        _engine = create_async_engine(
+            settings.DATABASE_URL,
+            pool_size=5,
+            max_overflow=10,
+            pool_pre_ping=True,  # Verify connection before using
+            echo=False,
+        )
+        _session_factory = async_sessionmaker(
+            _engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
+        )
+    return _engine
 
 
 class Base(DeclarativeBase):
@@ -27,7 +35,8 @@ class Base(DeclarativeBase):
 
 
 async def get_db():
-    async with AsyncSessionLocal() as session:
+    get_engine()  # Ensure engine is initialized
+    async with _session_factory() as session:
         try:
             yield session
             await session.commit()
