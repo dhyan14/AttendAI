@@ -15,8 +15,16 @@ def get_engine():
                 "DATABASE_URL is not set! "
                 "Add it to Railway environment variables."
             )
+        
+        db_url = settings.DATABASE_URL
+        # Auto-convert synchronous Postgres scheme to asyncpg
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif db_url.startswith("postgresql://"):
+            db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
         _engine = create_async_engine(
-            settings.DATABASE_URL,
+            db_url,
             pool_size=5,
             max_overflow=10,
             pool_pre_ping=True,  # Verify connection before using
