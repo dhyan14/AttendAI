@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { BookOpen, Users, TrendingUp, Clock, LogOut } from "lucide-react";
+import { BookOpen, Users, TrendingUp, Clock, LogOut, Loader2 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import TopBar from "@/components/layout/TopBar";
 
