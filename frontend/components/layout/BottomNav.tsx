@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, Calendar, Users, User } from "lucide-react";
+import { Home, Calendar, Users, User, ShieldAlert, FileText, Building2 } from "lucide-react";
 
 interface NavItem {
   href: string;
@@ -10,7 +10,7 @@ interface NavItem {
 }
 
 interface BottomNavProps {
-  role: "faculty" | "student" | "dept_admin" | "org_admin";
+  role: "faculty" | "student" | "dept_admin" | "org_admin" | "super_admin";
 }
 
 const facultyNav: NavItem[] = [
@@ -27,9 +27,42 @@ const studentNav: NavItem[] = [
   { href: "/student/profile",    label: "Profile",    icon: <User size={20} /> },
 ];
 
+const deptAdminNav: NavItem[] = [
+  { href: "/admin/dashboard", label: "Home",     icon: <Home size={20} /> },
+  { href: "/admin/students",  label: "Students", icon: <Users size={20} /> },
+  { href: "/admin/faculty",   label: "Faculty",  icon: <User size={20} /> },
+  { href: "/admin/disputes",  label: "Disputes", icon: <ShieldAlert size={20} /> },
+];
+
+const orgAdminNav: NavItem[] = [
+  { href: "/admin/dashboard",   label: "Home",       icon: <Home size={20} /> },
+  { href: "/admin/departments", label: "Depts",      icon: <Building2 size={20} /> },
+  { href: "/admin/reports",     label: "Reports",    icon: <FileText size={20} /> },
+];
+
 export default function BottomNav({ role }: BottomNavProps) {
   const pathname = usePathname();
-  const isFaculty = role === "faculty" || role === "dept_admin";
+
+  // Admin layouts are flat rows
+  if (role === "dept_admin" || role === "org_admin" || role === "super_admin") {
+    const items = role === "dept_admin" ? deptAdminNav : orgAdminNav;
+    return (
+      <nav className="bottom-nav">
+        {items.map((item) => (
+          <Link
+            key={item.href}
+            href={item.href}
+            className={`nav-item ${pathname === item.href ? "active" : ""}`}
+          >
+            {item.icon}
+            <span>{item.label}</span>
+          </Link>
+        ))}
+      </nav>
+    );
+  }
+
+  const isFaculty = role === "faculty";
   const navItems = isFaculty ? facultyNav : studentNav;
 
   // Split into 2 + center + 2

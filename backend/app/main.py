@@ -1,13 +1,28 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 
 from app.config import settings
-from app.api import auth, users, students, faculty, subjects, attendance, recognition, disputes, reports
+from app.api import auth, users, students, faculty, subjects, attendance, recognition, disputes, reports, departments
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Seed database on startup
+    from app.database import get_db
+    from app.services.seed_service import seed_database
+    try:
+        async for db in get_db():
+            await seed_database(db)
+            break
+    except Exception as e:
+        print(f"[STARTUP ERROR] Database seeding failed: {e}")
+    yield
 
 app = FastAPI(
     title="AttendAI API",
     description="AI-powered attendance management for educational institutions",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -21,6 +36,7 @@ app.add_middleware(
 app.include_router(auth.router,        prefix="/auth",        tags=["Auth"])
 app.include_router(users.router,       prefix="/users",       tags=["Users"])
 app.include_router(students.router,    prefix="/students",    tags=["Students"])
+app.include_router(departments.router, prefix="/departments", tags=["Departments"])
 app.include_router(faculty.router,     prefix="/faculty",     tags=["Faculty"])
 app.include_router(subjects.router,    prefix="/subjects",    tags=["Subjects"])
 app.include_router(attendance.router,  prefix="/attendance",  tags=["Attendance"])
