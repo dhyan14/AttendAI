@@ -27,5 +27,5 @@ COPY . .
 
 EXPOSE 8000
 
-# Shell form so $PORT env variable is expanded by Railway
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+# Use sh -c so $PORT is properly expanded at runtime
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
