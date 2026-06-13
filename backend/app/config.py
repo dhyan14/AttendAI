@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     FACE_MODEL_NAME: str = "buffalo_l"
 
     # CORS
-    ALLOWED_ORIGINS: str = "http://localhost:3000"
+    ALLOWED_ORIGINS: str = "http://localhost:3000,https://attend-ai-kvl7.vercel.app"
 
     @property
     def allowed_origins_list(self) -> List[str]:
