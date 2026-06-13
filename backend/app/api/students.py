@@ -235,3 +235,47 @@ async def get_student_attendance(
         "absent": total - present,
         "percentage": percentage,
     }
+
+
+@router.get("/{student_id}/attendance/history")
+async def get_student_attendance_history(
+    student_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Retrieve history of attendance records for a student."""
+    query = select(
+        AttendanceRecord,
+        Lecture.date.label("lecture_date"),
+        Lecture.lecture_no.label("lecture_no"),
+        Subject.name.label("subject_name"),
+        Subject.code.label("subject_code"),
+        Faculty.name.label("faculty_name")
+    ).join(
+        Lecture, Lecture.id == AttendanceRecord.lecture_id
+    ).join(
+        Subject, Subject.id == Lecture.subject_id
+    ).join(
+        Faculty, Faculty.id == Lecture.faculty_id
+    ).where(
+        AttendanceRecord.student_id == student_id
+    ).order_by(
+        Lecture.date.desc()
+    )
+    
+    result = await db.execute(query)
+    rows = result.all()
+    
+    return [
+        {
+            "id": str(r.AttendanceRecord.id),
+            "lecture_id": str(r.AttendanceRecord.lecture_id),
+            "date": r.lecture_date.strftime("%Y-%m-%d"),
+            "time": r.lecture_date.strftime("%I:%M %p"),
+            "lecture_no": r.lecture_no,
+            "subject_name": r.subject_name,
+            "subject_code": r.subject_code,
+            "faculty_name": r.faculty_name,
+            "status": r.AttendanceRecord.status.value,
+        } for r in rows
+    ]
