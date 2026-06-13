@@ -1,0 +1,44 @@
+# ─── Python / Backend ──────────────────────────────────────
+backend/.env
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.pyc
+backend/*.pyo
+backend/.venv/
+backend/venv/
+backend/*.egg-info/
+backend/.pytest_cache/
+backend/htmlcov/
+backend/.coverage
+backend/dist/
+backend/build/
+backend/.mypy_cache/
+
+# InsightFace downloaded models (large files - Railway downloads at build time)
+backend/.insightface/
+
+# ─── Node / Frontend ───────────────────────────────────────
+frontend/.env
+frontend/.env.local
+frontend/.env.production
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/dist/
+frontend/.DS_Store
+frontend/*.tsbuildinfo
+frontend/npm-debug.log*
+
+# ─── OS ────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# ─── IDE ───────────────────────────────────────────────────
+.vscode/settings.json
+.idea/
+
+# ─── Logs ──────────────────────────────────────────────────
+*.log
+logs/
