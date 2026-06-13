@@ -118,3 +118,30 @@ async def create_faculty(
         dept_id=str(faculty.dept_id),
         email=user.email
     )
+
+
+@router.get("/me")
+async def get_faculty_me(
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """Get the current logged in faculty member's profile details."""
+    result = await db.execute(
+        select(Faculty).where(Faculty.user_id == current_user.id)
+    )
+    fac = result.scalar_one_or_none()
+    if not fac:
+        raise HTTPException(status_code=404, detail="Faculty profile not found")
+        
+    # Get department name
+    dept_res = await db.execute(select(Department).where(Department.id == fac.dept_id))
+    dept = dept_res.scalar_one_or_none()
+    
+    return {
+        "id": str(fac.id),
+        "name": fac.name,
+        "designation": fac.designation,
+        "dept_id": str(fac.dept_id),
+        "dept_name": dept.name if dept else "Unknown",
+        "email": current_user.email
+    }

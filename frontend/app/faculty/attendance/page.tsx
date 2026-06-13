@@ -1,68 +1,55 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { apiFetch } from "@/lib/api";
 import TopBar from "@/components/layout/TopBar";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Calendar, Loader2 } from "lucide-react";
 
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DAYS   = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
-// Mock lecture data: date → lecture count
-const mockLectures: Record<string, { count: number; lectures: { subject: string; div: string; lectureNo: number; time: string; present: number; total: number }[] }> = {
-  "2026-03-02": { count: 1, lectures: [{ subject: "Data Structures", div: "Div A", lectureNo: 1, time: "10:00 AM", present: 68, total: 72 }] },
-  "2026-03-12": { count: 1, lectures: [{ subject: "Engineering Mathematics 4", div: "Div B", lectureNo: 2, time: "11:00 AM", present: 55, total: 76 }] },
-  "2026-03-13": { count: 3, lectures: [
-    { subject: "Engineering Mathematics 4", div: "Div B", lectureNo: 3, time: "09:00 AM", present: 60, total: 76 },
-    { subject: "Data Structures", div: "Div A", lectureNo: 2, time: "11:00 AM", present: 65, total: 72 },
-    { subject: "Physics", div: "Div C", lectureNo: 1, time: "02:00 PM", present: 40, total: 55 },
-  ]},
-  "2026-03-14": { count: 1, lectures: [{ subject: "Chemistry", div: "Div A", lectureNo: 1, time: "10:00 AM", present: 50, total: 60 }] },
-  "2026-03-16": { count: 2, lectures: [
-    { subject: "Engineering Mathematics 4", div: "Div B", lectureNo: 4, time: "09:00 AM", present: 62, total: 76 },
-    { subject: "Data Structures", div: "Div A", lectureNo: 3, time: "12:00 PM", present: 68, total: 72 },
-  ]},
-  "2026-03-17": { count: 1, lectures: [{ subject: "Physics", div: "Div C", lectureNo: 2, time: "10:00 AM", present: 42, total: 55 }] },
-  "2026-03-18": { count: 3, lectures: [
-    { subject: "Engineering Mathematics 4", div: "Div B", lectureNo: 5, time: "09:00 AM", present: 58, total: 76 },
-    { subject: "Data Structures", div: "Div A", lectureNo: 4, time: "11:00 AM", present: 70, total: 72 },
-    { subject: "Chemistry", div: "Div A", lectureNo: 2, time: "02:00 PM", present: 52, total: 60 },
-  ]},
-  "2026-03-20": { count: 1, lectures: [{ subject: "Physics", div: "Div C", lectureNo: 3, time: "10:00 AM", present: 45, total: 55 }] },
-  "2026-03-23": { count: 2, lectures: [
-    { subject: "Engineering Mathematics 4", div: "Div B", lectureNo: 5, time: "09:00 AM", present: 33, total: 76 },
-    { subject: "Data Structures", div: "Div A", lectureNo: 5, time: "11:00 AM", present: 66, total: 72 },
-  ]},
-  "2026-03-24": { count: 2, lectures: [
-    { subject: "Physics", div: "Div C", lectureNo: 4, time: "10:00 AM", present: 48, total: 55 },
-    { subject: "Chemistry", div: "Div A", lectureNo: 3, time: "12:00 PM", present: 54, total: 60 },
-  ]},
-  "2026-03-25": { count: 5, lectures: [
-    { subject: "Engineering Mathematics 4", div: "Div B", lectureNo: 5, time: "09:00 AM", present: 33, total: 76 },
-    { subject: "Data Structures", div: "Div A", lectureNo: 5, time: "11:00 AM", present: 66, total: 72 },
-    { subject: "Physics", div: "Div C", lectureNo: 4, time: "01:00 PM", present: 48, total: 55 },
-    { subject: "Chemistry", div: "Div A", lectureNo: 3, time: "02:00 PM", present: 54, total: 60 },
-    { subject: "Engineering Mathematics 4", div: "Div A", lectureNo: 2, time: "04:00 PM", present: 58, total: 70 },
-  ]},
-  "2026-03-27": { count: 3, lectures: [
-    { subject: "Engineering Mathematics 4", div: "Div B", lectureNo: 5, time: "02:07 PM", present: 33, total: 76 },
-    { subject: "Data Structures", div: "Div A", lectureNo: 6, time: "04:00 PM", present: 70, total: 72 },
-    { subject: "Physics", div: "Div C", lectureNo: 5, time: "05:00 PM", present: 50, total: 55 },
-  ]},
-  "2026-03-30": { count: 2, lectures: [
-    { subject: "Chemistry", div: "Div A", lectureNo: 4, time: "10:00 AM", present: 55, total: 60 },
-    { subject: "Physics", div: "Div C", lectureNo: 6, time: "12:00 PM", present: 52, total: 55 },
-  ]},
-};
+interface LectureRow {
+  id: string;
+  subject: string;
+  div: string;
+  lectureNo: number;
+  time: string;
+  present: number;
+  total: number;
+  status: string;
+}
 
 export default function AttendanceHistoryPage() {
+  const router = useRouter();
   const now = new Date();
-  const [year, setYear]   = useState(2026);
-  const [month, setMonth] = useState(2); // 0-indexed; 2 = March
-  const [selectedDate, setSelectedDate] = useState("2026-03-27");
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth());
+  const [selectedDate, setSelectedDate] = useState(now.toISOString().split("T")[0]);
+  const [lectures, setLectures] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadHistory() {
+      try {
+        const res = await apiFetch("/attendance/lectures");
+        if (res.ok) {
+          const data = await res.json();
+          setLectures(data);
+        }
+      } catch (err) {
+        console.error("Error loading attendance history:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadHistory();
+  }, []);
 
   function prevMonth() {
     if (month === 0) { setMonth(11); setYear(y => y - 1); }
     else setMonth(m => m - 1);
   }
+  
   function nextMonth() {
     if (month === 11) { setMonth(0); setYear(y => y + 1); }
     else setMonth(m => m + 1);
@@ -76,12 +63,32 @@ export default function AttendanceHistoryPage() {
     ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
   ];
 
-  const selectedData = mockLectures[selectedDate];
+  // Group lectures by date
+  const lecturesByDate: Record<string, { count: number; lectures: LectureRow[] }> = {};
+  lectures.forEach(l => {
+    const key = l.date; // YYYY-MM-DD
+    if (!lecturesByDate[key]) {
+      lecturesByDate[key] = { count: 0, lectures: [] };
+    }
+    lecturesByDate[key].count += 1;
+    lecturesByDate[key].lectures.push({
+      id: l.id,
+      subject: l.subject_name,
+      div: `Div ${l.division}`,
+      lectureNo: l.lecture_no,
+      time: l.time,
+      present: l.present_count,
+      total: l.total_students,
+      status: l.status,
+    });
+  });
+
+  const selectedData = lecturesByDate[selectedDate];
   const selDay = selectedDate ? new Date(selectedDate) : null;
 
   return (
-    <div className="page-content">
-      <TopBar title="Attendance History" showFilter />
+    <div className="page-content" style={{ paddingBottom: 100 }}>
+      <TopBar title="Attendance History" />
 
       {/* Calendar Card */}
       <div className="card" style={{ marginBottom: 20, padding: 16 }}>
@@ -104,44 +111,50 @@ export default function AttendanceHistoryPage() {
         </div>
 
         {/* Calendar Grid */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
-          {cells.map((day, i) => {
-            if (!day) return <div key={i} />;
-            const key = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-            const data = mockLectures[key];
-            const isSelected = key === selectedDate;
-            const isToday = day === now.getDate() && month === now.getMonth() && year === now.getFullYear();
+        {loading ? (
+          <div style={{ display: "flex", justifyContent: "center", padding: "24px 0" }}>
+            <Loader2 className="animate-spin" size={24} style={{ color: "var(--accent)", animation: "spin 1s linear infinite" }} />
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+            {cells.map((day, i) => {
+              if (!day) return <div key={i} />;
+              const key = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+              const data = lecturesByDate[key];
+              const isSelected = key === selectedDate;
+              const isToday = day === now.getDate() && month === now.getMonth() && year === now.getFullYear();
 
-            return (
-              <button
-                key={i}
-                onClick={() => setSelectedDate(key)}
-                style={{
-                  position: "relative",
-                  display: "flex", flexDirection: "column", alignItems: "center",
-                  justifyContent: "center", aspectRatio: "1",
-                  borderRadius: 99, border: "none",
-                  background: isSelected ? "var(--accent)" : "transparent",
-                  color: isSelected ? "white" : isToday ? "var(--accent)" : "var(--text-primary)",
-                  cursor: "pointer",
-                  fontWeight: isToday || isSelected ? 700 : 400,
-                  fontSize: 14, transition: "all 0.15s",
-                }}
-              >
-                {data && !isSelected && (
-                  <div style={{
-                    position: "absolute", top: 2, right: 2,
-                    width: 18, height: 18, borderRadius: 99,
-                    background: "var(--accent)", color: "white",
-                    fontSize: 9, fontWeight: 700,
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                  }}>{data.count}</div>
-                )}
-                {day}
-              </button>
-            );
-          })}
-        </div>
+              return (
+                <button
+                  key={i}
+                  onClick={() => setSelectedDate(key)}
+                  style={{
+                    position: "relative",
+                    display: "flex", flexDirection: "column", alignItems: "center",
+                    justifyContent: "center", aspectRatio: "1",
+                    borderRadius: 99, border: "none",
+                    background: isSelected ? "var(--accent)" : "transparent",
+                    color: isSelected ? "white" : isToday ? "var(--accent)" : "var(--text-primary)",
+                    cursor: "pointer",
+                    fontWeight: isToday || isSelected ? 700 : 400,
+                    fontSize: 14, transition: "all 0.15s",
+                  }}
+                >
+                  {data && !isSelected && (
+                    <div style={{
+                      position: "absolute", top: 2, right: 2,
+                      width: 18, height: 18, borderRadius: 99,
+                      background: "var(--accent)", color: "white",
+                      fontSize: 9, fontWeight: 700,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>{data.count}</div>
+                  )}
+                  {day}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Selected Date Lectures */}
@@ -155,7 +168,12 @@ export default function AttendanceHistoryPage() {
           </div>
 
           {selectedData.lectures.map((l, i) => (
-            <div key={i} className="card-accent" style={{ marginBottom: 12 }}>
+            <div 
+              key={l.id} 
+              className="card-accent" 
+              style={{ marginBottom: 12, cursor: "pointer", borderLeftColor: l.status === "finalized" ? "var(--success)" : "var(--accent)" }}
+              onClick={() => router.push(`/faculty/attendance/take?lecture_id=${l.id}`)} // Redirect to review if needed
+            >
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
                 <span className="badge badge-muted" style={{ fontSize: 11 }}>⊞ {l.div}</span>
                 <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>Lecture {l.lectureNo}</span>
@@ -165,19 +183,23 @@ export default function AttendanceHistoryPage() {
                 <span style={{ fontSize: 13, color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: 4 }}>
                   🕐 {l.time}
                 </span>
-                <span className="badge badge-present">{l.present}/{l.total} Present</span>
+                <span className={`badge ${l.status === "finalized" ? "badge-present" : "badge-warning"}`}>
+                  {l.status === "finalized" ? `${l.present}/${l.total} Present` : "Pending Review"}
+                </span>
               </div>
             </div>
           ))}
         </>
       )}
 
-      {selDay && !selectedData && (
+      {selDay && !selectedData && !loading && (
         <div style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)" }}>
           <div style={{ fontSize: 36, marginBottom: 8 }}>📅</div>
           <p>No lectures on this day</p>
         </div>
       )}
+      
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }

@@ -1,15 +1,27 @@
 "use client";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { apiFetch } from "@/lib/api";
 import TopBar from "@/components/layout/TopBar";
-import { TrendingUp, AlertCircle, Award } from "lucide-react";
+import { TrendingUp, AlertCircle, Award, Loader2, LogOut } from "lucide-react";
 
-const SUBJECTS = [
-  { name: "Engineering Mathematics 4", code: "EM4", percentage: 82, present: 18, total: 22, color: "var(--accent)" },
-  { name: "Data Structures",           code: "DS",  percentage: 91, present: 20, total: 22, color: "var(--success)" },
-  { name: "Physics",                   code: "PHY", percentage: 68, present: 15, total: 22, color: "var(--warning)" },
-  { name: "Chemistry",                 code: "CHE", percentage: 55, present: 12, total: 22, color: "var(--danger)" },
-  { name: "Digital Electronics",       code: "DE",  percentage: 77, present: 17, total: 22, color: "var(--accent-light)" },
-];
+interface SubjectStats {
+  name: string;
+  code: string;
+  percentage: number;
+  present: number;
+  total: number;
+  color: string;
+}
+
+interface StudentProfile {
+  id: string;
+  roll_no: string;
+  name: string;
+  division: string;
+  batch: string;
+  semester: number;
+}
 
 function ProgressRing({ pct, size = 80, stroke = 7 }: { pct: number; size?: number; stroke?: number }) {
   const r = (size - stroke) / 2;
@@ -32,22 +44,129 @@ function ProgressRing({ pct, size = 80, stroke = 7 }: { pct: number; size?: numb
 
 export default function StudentHomePage() {
   const router = useRouter();
-  const overall = Math.round(SUBJECTS.reduce((a, s) => a + s.percentage, 0) / SUBJECTS.length);
-  const low = SUBJECTS.filter(s => s.percentage < 75);
+  const [profile, setProfile] = useState<StudentProfile | null>(null);
+  const [overallStats, setOverallStats] = useState({ total_lectures: 0, present: 0, absent: 0, percentage: 0 });
+  const [subjects, setSubjects] = useState<SubjectStats[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadStudentData() {
+      try {
+        // 1. Get student profile
+        const profileRes = await apiFetch("/students/me");
+        if (!profileRes.ok) {
+          throw new Error("Student profile not found");
+        }
+        const profileData = await profileRes.json();
+        setProfile(profileData);
+
+        // 2. Get overall stats
+        const statsRes = await apiFetch(`/students/${profileData.id}/attendance`);
+        if (statsRes.ok) {
+          setOverallStats(await statsRes.json());
+        }
+
+        // 3. Get history to calculate per-subject stats
+        const historyRes = await apiFetch(`/students/${profileData.id}/attendance/history`);
+        if (historyRes.ok) {
+          const historyData = await historyRes.json();
+          
+          // Group by subject
+          const subjMap: Record<string, { name: string; present: number; total: number }> = {};
+          historyData.forEach((h: any) => {
+            const code = h.subject_code;
+            if (!subjMap[code]) {
+              subjMap[code] = { name: h.subject_name, present: 0, total: 0 };
+            }
+            subjMap[code].total += 1;
+            if (h.status === "present") {
+              subjMap[code].present += 1;
+            }
+          });
+
+          // Convert map to list
+          const colors = ["var(--accent)", "var(--success)", "var(--warning)", "var(--danger)", "var(--accent-light)"];
+          const subjList: SubjectStats[] = Object.keys(subjMap).map((code, idx) => {
+            const s = subjMap[code];
+            const percentage = s.total > 0 ? Math.round((s.present / s.total) * 100) : 0;
+            return {
+              name: s.name,
+              code,
+              percentage,
+              present: s.present,
+              total: s.total,
+              color: colors[idx % colors.length],
+            };
+          });
+
+          setSubjects(subjList);
+        }
+      } catch (err) {
+        console.error("Error loading student data:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadStudentData();
+  }, []);
+
+  function handleLogout() {
+    localStorage.clear();
+    router.replace("/login");
+  }
+
+  const low = subjects.filter(s => s.percentage < 75);
+
+  if (loading) {
+    return (
+      <div style={{ minHeight: "100dvh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
+        <Loader2 className="animate-spin" size={32} style={{ color: "var(--accent)", animation: "spin 1s linear infinite" }} />
+        <p style={{ color: "var(--text-secondary)", fontSize: 14 }}>Loading your dashboard...</p>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
 
   return (
-    <div className="page-content">
-      <TopBar title="AttendAI" />
+    <div className="page-content fade-up" style={{ paddingBottom: 100 }}>
+      <TopBar 
+        title="Student Portal" 
+        rightAction={
+          <button
+            onClick={handleLogout}
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--danger)",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 14,
+              fontWeight: 600,
+            }}
+          >
+            <LogOut size={16} />
+            Logout
+          </button>
+        }
+      />
+
+      {/* Profile summary */}
+      <div style={{ padding: "0 0 16px" }}>
+        <h2 style={{ fontSize: 20, fontWeight: 700 }}>Hey, {profile?.name || "Student"} 👋</h2>
+        <p style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 2 }}>Roll No: {profile?.roll_no} · Division {profile?.division} · Sem {profile?.semester}</p>
+      </div>
 
       {/* Overall Attendance Card */}
-      <div className="card" style={{ marginBottom: 16, background: "linear-gradient(135deg, #1a1730 0%, var(--bg-card) 100%)", border: "1px solid var(--border-accent)" }}>
+      <div className="card" style={{ marginBottom: 16, background: "linear-gradient(135deg, #16122d 0%, var(--bg-card) 100%)", border: "1px solid var(--border-accent)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <ProgressRing pct={overall} size={90} stroke={8} />
+          <ProgressRing pct={overallStats.percentage} size={90} stroke={8} />
           <div>
             <div style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 4 }}>Overall Attendance</div>
-            <div style={{ fontSize: 28, fontWeight: 800, marginBottom: 2 }}>{overall}%</div>
-            <div style={{ fontSize: 12, color: overall >= 75 ? "var(--success)" : "var(--danger)" }}>
-              {overall >= 75 ? "✓ Good standing" : "⚠ Below required 75%"}
+            <div style={{ fontSize: 28, fontWeight: 800, marginBottom: 2 }}>{overallStats.percentage}%</div>
+            <div style={{ fontSize: 12, color: overallStats.percentage >= 75 ? "var(--success)" : "var(--danger)" }}>
+              {overallStats.percentage >= 75 ? "✓ Good standing" : "⚠ Below required 75%"}
             </div>
           </div>
         </div>
@@ -56,9 +175,9 @@ export default function StudentHomePage() {
       {/* Quick Stats */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
         {[
-          { label: "Present", value: SUBJECTS.reduce((a,s)=>a+s.present,0), color: "var(--success)" },
-          { label: "Absent",  value: SUBJECTS.reduce((a,s)=>a+(s.total-s.present),0), color: "var(--danger)" },
-          { label: "Total",   value: SUBJECTS.reduce((a,s)=>a+s.total,0), color: "var(--accent)" },
+          { label: "Present", value: overallStats.present, color: "var(--success)" },
+          { label: "Absent",  value: overallStats.absent, color: "var(--danger)" },
+          { label: "Total",   value: overallStats.total_lectures, color: "var(--accent)" },
         ].map((st, i) => (
           <div key={i} className="card" style={{ textAlign: "center", padding: "12px 8px" }}>
             <div style={{ fontSize: 22, fontWeight: 800, color: st.color }}>{st.value}</div>
@@ -84,28 +203,31 @@ export default function StudentHomePage() {
       {/* Subject List */}
       <div className="section-header">
         <span className="section-title">Subjects</span>
-        <button onClick={() => router.push("/student/subjects")} style={{ background:"none", border:"none", color:"var(--accent)", fontSize:13, cursor:"pointer" }}>
-          See all
-        </button>
       </div>
 
-      {SUBJECTS.map((s, i) => (
-        <div key={i} className="card" style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}
-          onClick={() => router.push("/student/subjects")}>
-          <div style={{ width: 40, height: 40, borderRadius: 10, background: "var(--accent-dim)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:700, color:"var(--accent)", flexShrink:0 }}>
-            {s.code}
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{s.name}</div>
-            <div style={{ background: "var(--bg-card-2)", borderRadius: 99, height: 4, overflow: "hidden" }}>
-              <div style={{ height: "100%", width: `${s.percentage}%`, background: s.color, borderRadius: 99, transition: "width 0.5s ease" }} />
-            </div>
-          </div>
-          <span style={{ fontSize: 14, fontWeight: 700, color: s.percentage >= 75 ? "var(--success)" : "var(--danger)", flexShrink:0 }}>
-            {s.percentage}%
-          </span>
+      {subjects.length === 0 ? (
+        <div className="card" style={{ textAlign: "center", padding: "32px 16px", color: "var(--text-secondary)" }}>
+          No subject statistics available.
         </div>
-      ))}
+      ) : (
+        subjects.map((s, i) => (
+          <div key={i} className="card" style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}
+            onClick={() => router.push("/student/attendance")}>
+            <div style={{ width: 40, height: 40, borderRadius: 10, background: "var(--accent-dim)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:700, color:"var(--accent)", flexShrink:0 }}>
+              {s.code}
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{s.name}</div>
+              <div style={{ background: "var(--bg-card-2)", borderRadius: 99, height: 4, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${s.percentage}%`, background: s.color, borderRadius: 99, transition: "width 0.5s ease" }} />
+              </div>
+            </div>
+            <span style={{ fontSize: 14, fontWeight: 700, color: s.percentage >= 75 ? "var(--success)" : "var(--danger)", flexShrink:0 }}>
+              {s.percentage}%
+            </span>
+          </div>
+        ))
+      )}
     </div>
   );
 }

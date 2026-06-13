@@ -42,6 +42,7 @@ class StudentResponse(BaseModel):
     semester: Optional[int]
     dept_id: str
     profile_image_url: Optional[str]
+    attendance_percentage: Optional[float] = None
 
     class Config:
         from_attributes = True
@@ -64,7 +65,19 @@ async def list_students(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    query = select(Student)
+    from sqlalchemy import func, case
+    from app.models import AttendanceRecord, AttendanceStatus
+    
+    present_cases = case((AttendanceRecord.status == AttendanceStatus.present, 1), else_=0)
+    
+    query = select(
+        Student,
+        func.count(AttendanceRecord.id).label("total_count"),
+        func.sum(present_cases).label("present_count")
+    ).outerjoin(
+        AttendanceRecord, AttendanceRecord.student_id == Student.id
+    )
+    
     if dept_id:
         query = query.where(Student.dept_id == dept_id)
     if division:
@@ -73,20 +86,34 @@ async def list_students(
         query = query.where(Student.batch == batch)
     if semester:
         query = query.where(Student.semester == semester)
-
-    result = await db.execute(query.order_by(Student.roll_no))
-    students = result.scalars().all()
-    return [StudentResponse(
-        id=str(s.id),
-        roll_no=s.roll_no,
-        enrollment_no=s.enrollment_no,
-        name=s.name,
-        division=s.division,
-        batch=s.batch,
-        semester=s.semester,
-        dept_id=str(s.dept_id),
-        profile_image_url=s.profile_image_url,
-    ) for s in students]
+        
+    query = query.group_by(Student.id).order_by(Student.roll_no)
+    
+    result = await db.execute(query)
+    rows = result.all()
+    
+    students_out = []
+    for row in rows:
+        s = row.Student
+        total = row.total_count
+        present = row.present_count or 0
+        pct = round((present / total * 100), 1) if total > 0 else 0.0
+        
+        students_out.append(
+            StudentResponse(
+                id=str(s.id),
+                roll_no=s.roll_no,
+                enrollment_no=s.enrollment_no,
+                name=s.name,
+                division=s.division,
+                batch=s.batch,
+                semester=s.semester,
+                dept_id=str(s.dept_id),
+                profile_image_url=s.profile_image_url,
+                attendance_percentage=pct
+            )
+        )
+    return students_out
 
 
 @router.post("/", response_model=StudentResponse)
@@ -279,3 +306,27 @@ async def get_student_attendance_history(
             "status": r.AttendanceRecord.status.value,
         } for r in rows
     ]
+
+
+@router.get("/me")
+async def get_student_me(
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """Get the current logged in student's profile details."""
+    result = await db.execute(
+        select(Student).where(Student.user_id == current_user.id)
+    )
+    student = result.scalar_one_or_none()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found")
+    return {
+        "id": str(student.id),
+        "roll_no": student.roll_no,
+        "name": student.name,
+        "division": student.division,
+        "batch": student.batch,
+        "semester": student.semester,
+        "dept_id": str(student.dept_id),
+        "profile_image_url": student.profile_image_url
+    }
