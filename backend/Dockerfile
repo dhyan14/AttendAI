@@ -25,14 +25,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Download InsightFace buffalo_l model at build time (so startup is fast)
-RUN python -c "\
-from insightface.app import FaceAnalysis; \
-app = FaceAnalysis(name='buffalo_l', providers=['CPUExecutionProvider']); \
-app.prepare(ctx_id=-1); \
-print('buffalo_l model ready')"
-
 EXPOSE 8000
 
-# Shell form (not JSON array) so $PORT env variable is expanded
+# Shell form so $PORT env variable is expanded by Railway
 CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
