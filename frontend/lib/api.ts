@@ -20,6 +20,22 @@ export async function apiFetch(
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  return fetch(`${API_URL}${path}`, { ...options, headers });
+  // Use manual redirect handling so Authorization header is preserved on 307/308 redirects
+  const resp = await fetch(`${API_URL}${path}`, {
+    ...options,
+    headers,
+    redirect: "manual",
+  });
+
+  // Follow 307/308 redirects manually (browser drops auth headers on automatic redirects)
+  if (resp.status === 307 || resp.status === 308) {
+    const location = resp.headers.get("location");
+    if (location) {
+      return fetch(location, { ...options, headers });
+    }
+  }
+
+  return resp;
 }
+
 
