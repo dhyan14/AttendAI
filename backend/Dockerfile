@@ -22,15 +22,6 @@ RUN pip install --no-cache-dir "numpy==1.26.4" "Cython==0.29.37"
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Step 3: Pre-download InsightFace buffalo_l model at BUILD time
-# This bakes the model into the image so there's no runtime download delay
-RUN python -c "\
-from insightface.app import FaceAnalysis; \
-model = FaceAnalysis(name='buffalo_l', providers=['CPUExecutionProvider']); \
-model.prepare(ctx_id=-1, det_size=(320, 320)); \
-print('buffalo_l model downloaded and cached') \
-"
-
 # Copy application code
 COPY . .
 

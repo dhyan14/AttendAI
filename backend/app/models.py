@@ -150,14 +150,16 @@ class Subject(Base):
 
 
 class SubjectAssignment(Base):
+    """Links a subject to a faculty member (optionally for a specific division/batch)."""
     __tablename__ = "subject_assignments"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    subject_id = Column(UUID(as_uuid=True), ForeignKey("subjects.id"), nullable=False)
-    faculty_id = Column(UUID(as_uuid=True), ForeignKey("faculty.id"), nullable=False)
-    division = Column(String)
-    batch = Column(String)
-    semester = Column(Integer)
+    id         = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    subject_id = Column(UUID(as_uuid=True), ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False)
+    faculty_id = Column(UUID(as_uuid=True), ForeignKey("faculty.id", ondelete="CASCADE"), nullable=False)
+    division   = Column(String)
+    batch      = Column(String)
+    semester   = Column(Integer)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
     subject = relationship("Subject", back_populates="assignments")
     faculty = relationship("Faculty")
