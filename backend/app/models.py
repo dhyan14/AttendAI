@@ -82,7 +82,7 @@ class User(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String, unique=True, nullable=False, index=True)
     password_hash = Column(String, nullable=False)
-    role = Column(Enum(UserRole), nullable=False)
+    role = Column(Enum(UserRole, native_enum=False), nullable=False)
     org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"))
     is_active = Column(Boolean, default=True)
     fcm_token = Column(String)  # Firebase push notification token
@@ -176,7 +176,7 @@ class Lecture(Base):
     lecture_no = Column(Integer)
     date = Column(DateTime(timezone=True), nullable=False)
     time_start = Column(DateTime(timezone=True))
-    status = Column(Enum(LectureStatus), default=LectureStatus.pending)
+    status = Column(Enum(LectureStatus, native_enum=False), default=LectureStatus.pending)
     mode = Column(String, default="ai")  # 'ai' | 'manual'
     classroom_image_urls = Column(ARRAY(String), default=[])
     total_students = Column(Integer, default=0)
@@ -198,8 +198,8 @@ class AttendanceRecord(Base):
     lecture_id = Column(UUID(as_uuid=True), ForeignKey("lectures.id"), nullable=False)
     student_id = Column(UUID(as_uuid=True), ForeignKey("students.id"), nullable=False)
     subject_id = Column(UUID(as_uuid=True), ForeignKey("subjects.id"), nullable=False)
-    status = Column(Enum(AttendanceStatus), nullable=False)
-    source = Column(Enum(AttendanceSource), default=AttendanceSource.auto)
+    status = Column(Enum(AttendanceStatus, native_enum=False), nullable=False)
+    source = Column(Enum(AttendanceSource, native_enum=False), default=AttendanceSource.auto)
     confidence = Column(Float)
     marked_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
@@ -236,7 +236,7 @@ class AttendanceDispute(Base):
     student_id = Column(UUID(as_uuid=True), ForeignKey("students.id"), nullable=False)
     lecture_id = Column(UUID(as_uuid=True), ForeignKey("lectures.id"), nullable=False)
     reason = Column(Text, nullable=False)
-    status = Column(Enum(DisputeStatus), default=DisputeStatus.open)
+    status = Column(Enum(DisputeStatus, native_enum=False), default=DisputeStatus.open)
     admin_note = Column(Text)
     resolved_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     resolved_at = Column(DateTime(timezone=True))

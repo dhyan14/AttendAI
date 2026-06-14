@@ -7,6 +7,17 @@ from app.api import auth, users, students, faculty, subjects, attendance, recogn
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Create all tables on startup (idempotent - safe to run every time)
+    from app.database import get_engine, Base
+    import app.models  # noqa: F401 – registers all models with Base.metadata
+    try:
+        engine = get_engine()
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        print("[STARTUP] Database tables created/verified successfully")
+    except Exception as e:
+        print(f"[STARTUP ERROR] Table creation failed: {e}")
+
     # Seed database on startup
     from app.database import get_db
     from app.services.seed_service import seed_database
