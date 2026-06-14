@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { BookOpen, Users, TrendingUp, Clock, LogOut, Loader2 } from "lucide-react";
+import { BookOpen, Users, TrendingUp, Clock, LogOut, Loader2, Camera, Sparkles, ChevronRight } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import TopBar from "@/components/layout/TopBar";
 
@@ -118,18 +118,46 @@ export default function FacultyHomePage() {
         ))}
       </div>
 
-      {/* Quick Action */}
-      <button
-        className="btn btn-primary"
-        style={{ marginBottom: 20, gap: 10 }}
-        onClick={() => router.push("/faculty/attendance/take")}
-      >
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
-          <circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4"/>
-          <path d="m21 21-3-3m0 0a4 4 0 1 0-5.66-5.66A4 4 0 0 0 18 18z"/>
-        </svg>
-        Take Attendance Now
-      </button>
+      {/* Today's pending CTA */}
+      {!loading && todayLectures.length > 0 && (
+        <div className="card" style={{ marginBottom: 20, background: "linear-gradient(135deg, #1b1437 0%, var(--bg-card) 100%)", border: "1px solid var(--border-accent)" }}>
+          <div style={{ fontSize: 11, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Today's Pending Sessions</div>
+          {todayLectures.filter(l => l.status === "pending").map(l => (
+            <button
+              key={l.id}
+              onClick={() => router.push(`/faculty/attendance/take?lecture_id=${l.id}`)}
+              style={{ width: "100%", background: "var(--bg-card-2)", border: "1px solid var(--border-accent)", borderRadius: 12, padding: "12px 14px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer", marginBottom: 8 }}
+            >
+              <div style={{ width: 36, height: 36, borderRadius: 10, background: "var(--accent-dim)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Clock size={18} style={{ color: "var(--accent)" }} />
+              </div>
+              <div style={{ flex: 1, textAlign: "left" }}>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>{l.subject_name}</div>
+                <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>Div {l.division} · Lecture {l.lecture_no}</div>
+              </div>
+              <ChevronRight size={16} style={{ color: "var(--text-muted)" }} />
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Quick Action: Take Attendance */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
+        <button
+          className="btn btn-primary"
+          style={{ gap: 8, fontSize: 14, padding: "14px 12px" }}
+          onClick={() => router.push("/faculty/attendance/take")}
+        >
+          <Camera size={18} /> Take Attendance
+        </button>
+        <button
+          className="btn btn-secondary"
+          style={{ gap: 8, fontSize: 14, padding: "14px 12px" }}
+          onClick={() => router.push("/faculty/attendance")}
+        >
+          <BookOpen size={18} /> History
+        </button>
+      </div>
 
       {/* Today's Lectures */}
       <div className="section-header">
@@ -143,18 +171,22 @@ export default function FacultyHomePage() {
       ) : lectures.length === 0 ? (
         <div className="card" style={{ textAlign: "center", padding: "40px 16px", color: "var(--text-secondary)" }}>
           <BookOpen size={48} style={{ color: "var(--text-muted)", marginBottom: 12, margin: "0 auto 12px" }} />
-          <p>No lectures scheduled.</p>
+          <p>No lectures yet. Take your first attendance above.</p>
         </div>
       ) : (
-        lectures.map((l, i) => (
-          <div 
-            key={i} 
-            className="lecture-card" 
-            style={{ 
+        lectures.slice(0, 10).map((l, i) => (
+          <div
+            key={i}
+            className="lecture-card"
+            style={{
               borderLeftColor: l.status === "finalized" ? "var(--success)" : "var(--accent)",
               cursor: "pointer"
             }}
-            onClick={() => router.push(`/faculty/attendance?lecture_id=${l.id}`)}
+            onClick={() =>
+              l.status === "finalized"
+                ? router.push(`/faculty/attendance/take?lecture_id=${l.id}`)
+                : router.push(`/faculty/attendance/take?lecture_id=${l.id}`)
+            }
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
               <span className="badge badge-muted" style={{ fontSize: 11 }}>⊞ {l.division} (Batch {l.batch})</span>
@@ -163,16 +195,18 @@ export default function FacultyHomePage() {
             <h3 style={{ marginBottom: 8, fontSize: 16 }}>{l.subject_name}</h3>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <span style={{ fontSize: 13, color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: 4 }}>
-                🕐 {l.time} ({l.date})
+                📅 {l.date}
               </span>
               {l.status === "finalized"
                 ? <span className="badge badge-present">{l.present_count}/{l.total_students} Present</span>
-                : <span className="badge badge-accent">Pending Review</span>
+                : <span className="badge badge-warning">Pending Review</span>
               }
             </div>
           </div>
         ))
       )}
+
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }

@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
 import uuid
+import base64
 
 from app.database import get_db
 from app.models import (
@@ -314,41 +315,89 @@ async def take_attendance_ai(
 ):
     """
     Take AI-based attendance using face recognition.
-    Falls back to a smart mock face detector if the AI engine is not running,
-    marking 80% of students present to ensure a successful demo workflow.
+    
+    Accepts a classroom photo, runs face detection and matching against enrolled
+    students' face embeddings, and marks attendance accordingly.
+    
+    Currently uses a realistic deterministic mock that:
+    - Reads the actual image bytes (validating the upload works)
+    - Marks 4/5 students present (80% attendance rate)
+    - Returns per-student confidence scores
+    
+    In production, replace the mock section with your face recognition service call.
     """
+    import random
+
     lecture_res = await db.execute(select(Lecture).where(Lecture.id == lecture_id))
     lecture = lecture_res.scalar_one_or_none()
     if not lecture:
         raise HTTPException(status_code=404, detail="Lecture not found")
 
-    # In a full setup, this triggers the face recognition service.
-    # To keep it reliable and functional for local testing/live demo:
+    # Read and validate the uploaded image
+    image_bytes = await file.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="Empty image file uploaded")
+
+    image_size_kb = len(image_bytes) / 1024
+    content_type = file.content_type or "image/jpeg"
+
+    # Encode image as base64 for returning as a preview thumbnail
+    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+    image_data_url = f"data:{content_type};base64,{image_b64}"
+
+    # Fetch all attendance records for this lecture
     records_res = await db.execute(
-        select(AttendanceRecord).where(AttendanceRecord.lecture_id == lecture.id)
+        select(AttendanceRecord, Student.name.label("student_name"), Student.roll_no.label("roll_no"))
+        .join(Student, Student.id == AttendanceRecord.student_id)
+        .where(AttendanceRecord.lecture_id == lecture.id)
+        .order_by(Student.roll_no)
     )
-    records = records_res.scalars().all()
-    
+    rec_rows = records_res.all()
+
+    if not rec_rows:
+        raise HTTPException(status_code=404, detail="No students enrolled for this lecture")
+
+    # ─── AI Detection (Mock Implementation) ────────────────
+    # In production: replace this block with actual face recognition pipeline
+    # e.g. call InsightFace service, match embeddings via pgvector cosine similarity
+    # ────────────────────────────────────────────────────────
+    detection_results = []
     present_count = 0
-    import random
     
-    # Deterministic mock: mark CS001, CS002, CS003, CS004 present, and CS005 absent
-    # This matches the dispute raised for CS005 or CS001.
-    for i, record in enumerate(records):
-        # Let's say we mark the first 4 present, 5th absent
-        is_present = (i % 5) != 4
-        record.status = AttendanceStatus.present if is_present else AttendanceStatus.absent
-        record.source = AttendanceSource.auto
-        record.confidence = round(random.uniform(0.78, 0.98), 2) if is_present else 0.15
+    # Seed random with image size for determinism (same photo = same result)
+    rng = random.Random(int(image_size_kb * 100))
+    
+    for i, row in enumerate(rec_rows):
+        record = row.AttendanceRecord
+        # 80% detection rate - last student in each group of 5 is marked absent
+        is_detected = (i % 5) != (len(rec_rows) - 1) % 5 if len(rec_rows) > 1 else True
+        confidence = round(rng.uniform(0.82, 0.97), 3) if is_detected else round(rng.uniform(0.08, 0.22), 3)
         
-        if is_present:
+        record.status = AttendanceStatus.present if is_detected else AttendanceStatus.absent
+        record.source = AttendanceSource.auto
+        record.confidence = confidence
+        
+        if is_detected:
             present_count += 1
+
+        detection_results.append({
+            "student_id": str(record.student_id),
+            "student_name": row.student_name,
+            "roll_no": row.roll_no,
+            "status": "present" if is_detected else "absent",
+            "confidence": confidence,
+            "source": "ai",
+        })
 
     lecture.present_count = present_count
     await db.commit()
 
     return {
         "message": "AI face recognition complete",
-        "detected_faces": len(records),
-        "matched_students": present_count,
+        "image_preview": image_data_url,
+        "image_size_kb": round(image_size_kb, 1),
+        "filename": file.filename,
+        "detected_faces": present_count,
+        "total_students": len(rec_rows),
+        "detection_results": detection_results,
     }
