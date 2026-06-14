@@ -18,6 +18,15 @@ async def lifespan(app: FastAPI):
         print("[STARTUP] Database tables created/verified successfully")
     except Exception as e:
         print(f"[STARTUP ERROR] Table creation failed: {e}")
+
+    # Initialize InsightFace model — awaited directly (it's async)
+    try:
+        from app.services.face_service import face_service
+        await face_service.initialize()
+    except Exception as e:
+        print(f"[STARTUP] Face service init skipped: {e}")
+
+
     yield
 
 app = FastAPI(

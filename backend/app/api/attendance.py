@@ -489,18 +489,30 @@ async def take_attendance_ai(
     lecture.present_count = present_count
     await db.commit()
 
-    no_face_students = len(stored_list) == 0 and face_service.initialized
+    no_embeddings   = len(stored_list) == 0
+    model_available = face_service.initialized
+
+    if use_ai:
+        mode    = "real_ai"
+        warning = None
+    elif model_available and no_embeddings:
+        mode    = "mock_no_embeddings"
+        warning = "⚠ No face photos registered for students in this class. Go to Admin → Faces and register Front, Left, Right photos for each student first."
+    elif not model_available:
+        mode    = "mock_model_loading"
+        warning = "⚠ AI model is still loading (first deploy takes ~60s). Refresh and try again — or results here are estimated."
+    else:
+        mode    = "mock"
+        warning = "⚠ Using estimated attendance — register student faces for accurate AI results."
+
     return {
         "ai_used": use_ai,
-        "mode": "real_ai" if use_ai else ("mock_no_embeddings" if no_face_students else "mock_model_unavailable"),
-        "warning": (
-            "No face embeddings registered for students in this lecture — using mock results."
-            if no_face_students
-            else ("Face recognition model unavailable — using mock results." if not face_service.initialized else None)
-        ),
+        "mode": mode,
+        "warning": warning,
         "images_processed": len(image_previews),
         "image_previews": image_previews,
         "detected_faces": present_count,
         "total_students": len(rec_rows),
         "detection_results": detection_results,
     }
+
