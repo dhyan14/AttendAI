@@ -24,6 +24,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[STARTUP ERROR] {e}")
 
+    # ── Kick off InsightFace model loading in the background ─────────────
+    # Models are baked into the image at /app/insightface_models so this
+    # should succeed quickly without any network calls.
+    import asyncio
+    from app.services.face_service import face_service
+
+    async def _init_face_model():
+        try:
+            await face_service.initialize()
+        except Exception as e:
+            print(f"[STARTUP] Face model init error: {e}")
+
+    asyncio.create_task(_init_face_model())
+    print("[STARTUP] Face model loading started in background...")
+
     yield
 
 app = FastAPI(
