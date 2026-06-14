@@ -63,13 +63,15 @@ export default function FaceRegisterPage() {
 
   // ── Load depts ──────────────────────────────────────────
   useEffect(() => {
-    apiFetch("/departments").then(r => r.ok ? r.json() : []).then(setDepts).catch(() => {});
+    apiFetch("/departments/").then(r => r.ok ? r.json() : []).then(setDepts).catch(() => {});
+
   }, []);
 
   // ── Load students in dept ────────────────────────────────
   useEffect(() => {
     if (!selDept) { setStudents([]); return; }
-    apiFetch(`/students?dept_id=${selDept.id}`)
+    apiFetch(`/students/?dept_id=${selDept.id}`)
+
       .then(r => r.ok ? r.json() : []).then(setStudents).catch(() => setStudents([]));
   }, [selDept]);
 

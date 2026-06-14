@@ -132,10 +132,25 @@ async def list_departments(
     current_user = Depends(get_current_user)
 ):
     """List all departments in the current user's organization."""
-    if not current_user.org_id:
+    org_id = current_user.org_id
+
+    # Fallback: dept_admin may be linked via Faculty table if org_id is somehow null
+    if not org_id:
+        from app.models import Faculty as FacultyModel, Department as DeptModel
+        fac_res = await db.execute(
+            select(FacultyModel).where(FacultyModel.user_id == current_user.id)
+        )
+        fac = fac_res.scalar_one_or_none()
+        if fac:
+            dept = await db.get(DeptModel, fac.dept_id)
+            if dept:
+                org_id = dept.org_id
+
+    if not org_id:
         return []
+
     result = await db.execute(
-        select(Department).where(Department.org_id == current_user.org_id)
+        select(Department).where(Department.org_id == org_id)
     )
     depts = result.scalars().all()
     return [
