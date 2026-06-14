@@ -16,7 +16,8 @@ class FaceService:
         """Blocking model load — runs in a thread pool."""
         from insightface.app import FaceAnalysis
         model = FaceAnalysis(
-            name="buffalo_l",
+            name="buffalo_s",
+            allowed_modules=["detection", "recognition"],
             providers=["CPUExecutionProvider"]
         )
         # Use smaller det_size to reduce RAM usage on Railway
@@ -24,13 +25,13 @@ class FaceService:
         return model
 
     async def initialize(self):
-        """Load InsightFace buffalo_l model in a thread (non-blocking)."""
+        """Load InsightFace buffalo_s model in a thread (non-blocking)."""
         loop = asyncio.get_event_loop()
         try:
-            print("[FaceService] Loading InsightFace buffalo_l model...")
+            print("[FaceService] Loading InsightFace buffalo_s model...")
             self.model = await loop.run_in_executor(self._executor, self._load_model)
             self.initialized = True
-            print("✅ InsightFace buffalo_l model ready")
+            print("✅ InsightFace buffalo_s model ready")
         except Exception as e:
             print(f"⚠️ InsightFace load failed: {e}")
             self.initialized = False

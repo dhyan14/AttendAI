@@ -344,6 +344,14 @@ async def take_attendance_ai(
     from app.services.face_service import face_service
     import random
 
+    # Lazy init — if model not loaded yet, try now (first request triggers load)
+    if not face_service.initialized:
+        try:
+            await face_service.initialize()
+        except Exception as e:
+            print(f"[FaceService] Lazy init failed: {e}")
+
+
     # ── Validate lecture ──────────────────────────────────────────────────
     try:
         lec_uuid = uuid.UUID(lecture_id)

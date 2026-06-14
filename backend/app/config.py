@@ -26,7 +26,7 @@ class Settings(BaseSettings):
 
     # Face Recognition
     FACE_RECOGNITION_THRESHOLD: float = 0.35
-    FACE_MODEL_NAME: str = "buffalo_l"
+    FACE_MODEL_NAME: str = "buffalo_s"
 
     # CORS
     ALLOWED_ORIGINS: str = "http://localhost:3000,https://attend-ai-kvl7.vercel.app"

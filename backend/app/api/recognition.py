@@ -76,6 +76,12 @@ async def register_face(
         raise HTTPException(status_code=400, detail="Empty image file")
 
     # ── Extract embedding ──────────────────────────────────────────────────
+    if not face_service.initialized:
+        try:
+            await face_service.initialize()
+        except Exception as e:
+            print(f"[FaceService] Lazy init failed: {e}")
+
     embedding: list[float]
     ai_used = face_service.initialized
 
@@ -87,6 +93,8 @@ async def register_face(
                     status_code=422,
                     detail="No face detected in the uploaded image. Please use a clear front-facing photo."
                 )
+        except HTTPException:
+            raise
         except RuntimeError:
             ai_used   = False
             embedding = [0.0] * 512   # fallback zero-vector

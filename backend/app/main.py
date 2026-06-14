@@ -8,30 +8,16 @@ from app.api import auth, users, students, faculty, subjects, attendance, recogn
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    import asyncio
-
-    # ── Create DB tables (fast, must complete before serving) ──────────────
+    # Create DB tables on startup — fast and must succeed before serving
     from app.database import get_engine, Base
     import app.models  # noqa: F401 – registers all models with Base.metadata
     try:
         engine = get_engine()
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        print("[STARTUP] Database tables created/verified successfully")
+        print("[STARTUP] Database tables created/verified")
     except Exception as e:
-        print(f"[STARTUP ERROR] Table creation failed: {e}")
-
-    # ── Load InsightFace in background so health check passes immediately ──
-    # The model loads while the server is already serving requests.
-    # Once initialized, face_service.initialized = True and real AI runs.
-    async def _init_face():
-        try:
-            from app.services.face_service import face_service
-            await face_service.initialize()
-        except Exception as e:
-            print(f"[FaceService] Background init error: {e}")
-
-    asyncio.create_task(_init_face())
+        print(f"[STARTUP ERROR] {e}")
 
     yield
 
