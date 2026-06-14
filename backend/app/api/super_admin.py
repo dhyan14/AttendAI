@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from app.database import get_db
 from app.api.deps import require_super_admin
 from app.models import (
@@ -8,7 +8,7 @@ from app.models import (
     Lecture, AttendanceRecord, AttendanceDispute, DisputeStatus,
 )
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import uuid
 import bcrypt
 
@@ -46,6 +46,14 @@ class FacultyCreate(BaseModel):
     email: str
     designation: Optional[str] = None
     dept_id: str
+
+
+class AdminCreate(BaseModel):
+    email: str
+    role: str  # "org_admin" | "dept_admin"
+    org_id: str
+    dept_id: Optional[str] = None   # required when role == dept_admin
+    name: Optional[str] = None      # for dept_admin Faculty profile
 
 
 # ─── Helper ────────────────────────────────────────────────
@@ -494,14 +502,27 @@ async def delete_faculty(
 async def list_all_users(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_super_admin),
-    role: Optional[str] = None,
+    role: Optional[str] = Query(None),
+    org_id: Optional[str] = Query(None),
+    admin_only: bool = Query(False),
 ):
+    """List users. Filter by role and/or org_id. admin_only=true returns org_admin+dept_admin only."""
     q = select(User, Organization.name.label("org_name")).join(
         Organization, Organization.id == User.org_id, isouter=True
     )
-    if role:
-        q = q.where(User.role == role)
-    q = q.order_by(User.created_at.desc()).limit(100)
+    if admin_only:
+        q = q.where(or_(
+            User.role == UserRole.org_admin,
+            User.role == UserRole.dept_admin,
+        ))
+    elif role:
+        try:
+            q = q.where(User.role == UserRole(role))
+        except ValueError:
+            pass
+    if org_id:
+        q = q.where(User.org_id == uuid.UUID(org_id))
+    q = q.order_by(User.created_at.desc()).limit(200)
     res = await db.execute(q)
     rows = res.all()
     return [
@@ -510,11 +531,86 @@ async def list_all_users(
             "email": r.User.email,
             "role": r.User.role.value,
             "org_name": r.org_name or "—",
+            "org_id": str(r.User.org_id) if r.User.org_id else None,
             "is_active": r.User.is_active,
             "created_at": r.User.created_at.strftime("%Y-%m-%d") if r.User.created_at else "—",
         }
         for r in rows
     ]
+
+
+@router.post("/admins")
+async def create_admin(
+    data: AdminCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_super_admin)
+):
+    """
+    Create an org_admin or dept_admin user.
+    For dept_admin, also creates a Faculty profile so they can be assigned to subjects.
+    Default password is Admin@123 for both roles.
+    """
+    # Validate role
+    if data.role not in ("org_admin", "dept_admin"):
+        raise HTTPException(status_code=400, detail="role must be 'org_admin' or 'dept_admin'")
+
+    # Validate org
+    org = await db.get(Organization, uuid.UUID(data.org_id))
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    # For dept_admin, validate dept
+    dept = None
+    if data.role == "dept_admin":
+        if not data.dept_id:
+            raise HTTPException(status_code=400, detail="dept_id is required for dept_admin")
+        dept = await db.get(Department, uuid.UUID(data.dept_id))
+        if not dept:
+            raise HTTPException(status_code=404, detail="Department not found")
+        if str(dept.org_id) != data.org_id:
+            raise HTTPException(status_code=400, detail="Department does not belong to this organization")
+
+    # Check email uniqueness
+    existing = await db.execute(select(User).where(User.email == data.email))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail=f"Email '{data.email}' already exists")
+
+    # Create user
+    user = User(
+        email=data.email,
+        password_hash=_hash("Admin@123"),
+        role=UserRole(data.role),
+        org_id=uuid.UUID(data.org_id),
+        is_active=True,
+    )
+    db.add(user)
+    await db.flush()
+
+    # For dept_admin: also create a Faculty profile
+    faculty_profile = None
+    if data.role == "dept_admin" and dept:
+        faculty_profile = Faculty(
+            user_id=user.id,
+            name=data.name or data.email.split("@")[0].replace(".", " ").title(),
+            designation="Department Admin",
+            dept_id=dept.id,
+        )
+        db.add(faculty_profile)
+
+    await db.commit()
+    await db.refresh(user)
+
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "role": user.role.value,
+        "org_id": str(user.org_id),
+        "org_name": org.name,
+        "dept_id": str(dept.id) if dept else None,
+        "dept_name": dept.name if dept else None,
+        "is_active": user.is_active,
+        "created_at": user.created_at.strftime("%Y-%m-%d") if user.created_at else "—",
+    }
 
 
 @router.patch("/users/{user_id}/toggle")
