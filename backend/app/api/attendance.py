@@ -380,11 +380,18 @@ async def take_attendance_ai(
     )
     stored_embs = emb_res.scalars().all()
 
-    stored_list = [
-        {"student_id": str(fe.student_id), "embedding": fe.embedding}
-        for fe in stored_embs
-        if fe.embedding and any(v != 0.0 for v in fe.embedding)  # skip placeholder zeros
-    ]
+    stored_list = []
+    for fe in stored_embs:
+        if fe.embedding is None:
+            continue
+        try:
+            # pgvector returns numpy arrays — convert to list and check for placeholder zeros
+            emb_list = fe.embedding.tolist() if hasattr(fe.embedding, "tolist") else list(fe.embedding)
+            if any(v != 0.0 for v in emb_list):
+                stored_list.append({"student_id": str(fe.student_id), "embedding": emb_list})
+        except Exception:
+            pass  # skip malformed embeddings
+
 
     # ── AI Mode vs. Mock Mode ────────────────────────────────────────────
     use_ai = face_service.initialized and len(stored_list) > 0
