@@ -47,6 +47,12 @@ async def list_subjects(
     current_user = Depends(get_current_user)
 ):
     """List subjects. Faculty sees only their assigned subjects; admins see all in their org."""
+    dept_uuid = None
+    if dept_id and dept_id not in ("undefined", "null", ""):
+        try:
+            dept_uuid = uuid.UUID(dept_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid dept_id UUID format")
 
     # Faculty: return only subjects assigned to them
     if current_user.role.value == "faculty":
@@ -70,8 +76,8 @@ async def list_subjects(
 
     # Admin / dept_admin / org_admin: return all subjects in their org/dept
     query = select(Subject)
-    if dept_id:
-        query = query.where(Subject.dept_id == dept_id)
+    if dept_uuid:
+        query = query.where(Subject.dept_id == dept_uuid)
     elif current_user.org_id:
         query = query.join(Department, Department.id == Subject.dept_id).where(Department.org_id == current_user.org_id)
     if semester:
@@ -226,16 +232,30 @@ async def list_subject_assignments(
     current_user = Depends(get_current_user),
 ):
     """List all subject assignments. Filter by dept or faculty."""
+    dept_uuid = None
+    if dept_id and dept_id not in ("undefined", "null", ""):
+        try:
+            dept_uuid = uuid.UUID(dept_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid dept_id UUID format")
+
+    fac_uuid = None
+    if faculty_id and faculty_id not in ("undefined", "null", ""):
+        try:
+            fac_uuid = uuid.UUID(faculty_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid faculty_id UUID format")
+
     query = (
         select(SubjectAssignment, Subject.name.label("subject_name"), Subject.code.label("subject_code"),
                Faculty.name.label("faculty_name"))
         .join(Subject, Subject.id == SubjectAssignment.subject_id)
         .join(Faculty, Faculty.id == SubjectAssignment.faculty_id)
     )
-    if faculty_id:
-        query = query.where(SubjectAssignment.faculty_id == faculty_id)
-    if dept_id:
-        query = query.where(Subject.dept_id == dept_id)
+    if fac_uuid:
+        query = query.where(SubjectAssignment.faculty_id == fac_uuid)
+    if dept_uuid:
+        query = query.where(Subject.dept_id == dept_uuid)
 
     result = await db.execute(query)
     rows = result.all()

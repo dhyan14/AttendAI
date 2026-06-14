@@ -41,13 +41,20 @@ async def list_faculty(
     current_user = Depends(get_current_user)
 ):
     """List all faculty members in the current user's organization."""
+    dept_uuid = None
+    if dept_id and dept_id not in ("undefined", "null", ""):
+        try:
+            dept_uuid = uuid.UUID(dept_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid dept_id UUID format")
+
     query = select(Faculty, User.email).join(User, User.id == Faculty.user_id)
     
     # Filter by user's organization
     query = query.where(User.org_id == current_user.org_id)
     
-    if dept_id:
-        query = query.where(Faculty.dept_id == dept_id)
+    if dept_uuid:
+        query = query.where(Faculty.dept_id == dept_uuid)
         
     result = await db.execute(query.order_by(Faculty.name))
     rows = result.all()

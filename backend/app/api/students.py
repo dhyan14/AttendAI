@@ -65,6 +65,13 @@ async def list_students(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    dept_uuid = None
+    if dept_id and dept_id not in ("undefined", "null", ""):
+        try:
+            dept_uuid = uuid.UUID(dept_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid dept_id UUID format")
+
     from sqlalchemy import func, case
     from app.models import AttendanceRecord, AttendanceStatus
     
@@ -78,8 +85,8 @@ async def list_students(
         AttendanceRecord, AttendanceRecord.student_id == Student.id
     )
     
-    if dept_id:
-        query = query.where(Student.dept_id == dept_id)
+    if dept_uuid:
+        query = query.where(Student.dept_id == dept_uuid)
     if division:
         query = query.where(Student.division == division)
     if batch:

@@ -11,11 +11,16 @@ async def lifespan(app: FastAPI):
     # Create DB tables on startup — fast and must succeed before serving
     from app.database import get_engine, Base
     import app.models  # noqa: F401 – registers all models with Base.metadata
+    from sqlalchemy import text
     try:
         engine = get_engine()
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        print("[STARTUP] Database tables created/verified")
+            # Ensure subject_assignments has the created_at column which was added to the model
+            await conn.execute(
+                text("ALTER TABLE subject_assignments ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT now();")
+            )
+        print("[STARTUP] Database tables created/verified successfully")
     except Exception as e:
         print(f"[STARTUP ERROR] {e}")
 
