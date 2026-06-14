@@ -54,6 +54,11 @@ export default function FaceRegisterPage() {
   const [faceData, setFaceData]   = useState<FaceData | null>(null);
   const [loadingFace, setLoadingFace] = useState(false);
 
+  // AI model status
+  const [modelStatus, setModelStatus] = useState<"unknown" | "ready" | "loading" | "failed">("unknown");
+  const [modelError, setModelError]   = useState<string | null>(null);
+  const [warmingUp, setWarmingUp]     = useState(false);
+
   // per-angle state
   const [uploading, setUploading] = useState<Record<Angle, boolean>>({ front: false, left: false, right: false });
   const [showCam, setShowCam]     = useState<Angle | null>(null);
@@ -61,11 +66,48 @@ export default function FaceRegisterPage() {
   const videoRef   = useRef<HTMLVideoElement>(null);
   const canvasRef  = useRef<HTMLCanvasElement>(null);
 
-  // ── Load depts ──────────────────────────────────────────
+  // ── Check AI model status ─────────────────────────────
+  const checkModelStatus = useCallback(async () => {
+    try {
+      const r = await apiFetch("/face/status");
+      if (r.ok) {
+        const data = await r.json();
+        setModelStatus(data.initialized ? "ready" : data.loading ? "loading" : "failed");
+        setModelError(data.load_error || null);
+      }
+    } catch {}
+  }, []);
+
+  const warmUpModel = async () => {
+    setWarmingUp(true);
+    try {
+      // Trigger lazy init by attempting a minimal registration — this will fail (no student)
+      // but the side-effect is model load. Better: call the status endpoint repeatedly.
+      await checkModelStatus();
+      // If still not ready, send a dummy request which will trigger loading in background
+      const form = new FormData();
+      form.append("student_id", "00000000-0000-0000-0000-000000000001");
+      form.append("angle", "front");
+      form.append("file", new File([""], "dummy.jpg", { type: "image/jpeg" }));
+      await apiFetch("/face/register", { method: "POST", body: form });
+    } catch {}
+    // Poll for 60s
+    let tries = 0;
+    const poll = setInterval(async () => {
+      tries++;
+      await checkModelStatus();
+      if (modelStatus === "ready" || tries > 20) {
+        clearInterval(poll);
+        setWarmingUp(false);
+      }
+    }, 3000);
+  };
+
+  // ── Load depts ──────────────────────────────────────
   useEffect(() => {
     apiFetch("/departments/").then(r => r.ok ? r.json() : []).then(setDepts).catch(() => {});
-
-  }, []);
+    checkModelStatus();
+  }, [checkModelStatus]);
 
   // ── Load students in dept ────────────────────────────────
   useEffect(() => {
@@ -159,7 +201,7 @@ export default function FaceRegisterPage() {
       <canvas ref={canvasRef} style={{ display: "none" }} />
 
       {/* Header */}
-      <div style={{ marginBottom: 24 }}>
+      <div style={{ marginBottom: 16 }}>
         <h1 style={{ fontSize: 22, fontWeight: 900, letterSpacing: -0.5, marginBottom: 4 }}>
           Face Registration
         </h1>
@@ -167,6 +209,76 @@ export default function FaceRegisterPage() {
           Register 3 angles per student for accurate AI attendance
         </p>
       </div>
+
+      {/* AI Model Status Banner */}
+      {modelStatus !== "ready" && (
+        <div style={{
+          marginBottom: 14, padding: "12px 14px", borderRadius: 12,
+          background: modelStatus === "unknown" ? "rgba(124,111,224,0.08)"
+            : modelStatus === "failed" ? "rgba(240,90,90,0.1)"
+            : "rgba(245,200,66,0.1)",
+          border: `1px solid ${modelStatus === "failed" ? "rgba(240,90,90,0.3)" : "rgba(245,200,66,0.3)"}`,
+          display: "flex", alignItems: "flex-start", gap: 10,
+        }}>
+          <AlertCircle size={18} style={{
+            color: modelStatus === "failed" ? "var(--danger)" : "#f5c842",
+            flexShrink: 0, marginTop: 1,
+          }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 2 }}>
+              {modelStatus === "unknown" && "⏳ Checking AI model status…"}
+              {modelStatus === "loading" && "⏳ AI model is loading — please wait ~30–60 seconds"}
+              {modelStatus === "failed" && "❌ AI model failed to load"}
+            </div>
+            {modelError && (
+              <div style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "monospace", wordBreak: "break-all" }}>
+                {modelError}
+              </div>
+            )}
+            {(modelStatus === "failed" || modelStatus === "not_started" as any) && !warmingUp && (
+              <button
+                onClick={warmUpModel}
+                style={{
+                  marginTop: 8, padding: "6px 14px", borderRadius: 8, fontSize: 12,
+                  fontWeight: 700, background: "var(--accent)", color: "#fff",
+                  border: "none", cursor: "pointer", fontFamily: "inherit",
+                }}
+              >
+                🔄 Retry / Warm Up Model
+              </button>
+            )}
+            {warmingUp && (
+              <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)" }}>
+                <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> Warming up… checking every 3s
+              </div>
+            )}
+            <button
+              onClick={checkModelStatus}
+              style={{
+                marginTop: 8, marginLeft: warmingUp ? 0 : 0, padding: "6px 12px", borderRadius: 8, fontSize: 11,
+                fontWeight: 600, background: "transparent", color: "var(--text-muted)",
+                border: "1px solid var(--border)", cursor: "pointer", fontFamily: "inherit",
+                display: "inline-flex", alignItems: "center", gap: 4,
+              }}
+            >
+              <RefreshCw size={10} /> Refresh Status
+            </button>
+          </div>
+        </div>
+      )}
+
+      {modelStatus === "ready" && (
+        <div style={{
+          marginBottom: 14, padding: "10px 14px", borderRadius: 12,
+          background: "rgba(34,211,122,0.08)", border: "1px solid rgba(34,211,122,0.2)",
+          display: "flex", alignItems: "center", gap: 8,
+        }}>
+          <CheckCircle2 size={15} style={{ color: "#22d37a", flexShrink: 0 }} />
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#22d37a" }}>
+            ✅ AI Face Recognition model is ready — registrations will use real embeddings
+          </div>
+        </div>
+      )}
 
       {/* Step 1 — Select Department */}
       <div className="card" style={{ marginBottom: 14 }}>

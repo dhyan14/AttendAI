@@ -82,25 +82,29 @@ async def register_face(
         except Exception as e:
             print(f"[FaceService] Lazy init failed: {e}")
 
-    embedding: list[float]
-    ai_used = face_service.initialized
+    if not face_service.initialized:
+        # Return 503 — do NOT save a zero-vector and mislead the admin
+        err_reason = face_service.load_error or "Unknown error"
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"⚠ Face recognition model is not loaded yet. Please wait 30-60 seconds after deployment "
+                f"and try again. Error: {err_reason}"
+            ),
+        )
 
-    if ai_used:
-        try:
-            embedding = face_service.get_embedding_single(image_bytes)
-            if embedding is None:
-                raise HTTPException(
-                    status_code=422,
-                    detail="No face detected in the uploaded image. Please use a clear front-facing photo."
-                )
-        except HTTPException:
-            raise
-        except RuntimeError:
-            ai_used   = False
-            embedding = [0.0] * 512   # fallback zero-vector
-    else:
-        # InsightFace not loaded — store a placeholder so the UI can proceed
-        embedding = [0.0] * 512
+    embedding: list[float]
+    try:
+        embedding = face_service.get_embedding_single(image_bytes)
+        if embedding is None:
+            raise HTTPException(
+                status_code=422,
+                detail="No face detected in the uploaded image. Please use a clear, well-lit front-facing photo.",
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Face extraction failed: {e}")
 
     # ── Thumbnail ─────────────────────────────────────────────────────────
     thumbnail = _make_thumbnail_b64(image_bytes)
@@ -127,9 +131,9 @@ async def register_face(
         "student_id": student_id,
         "student_name": student.name,
         "angle": angle,
-        "ai_used": ai_used,
+        "ai_used": True,
         "thumbnail": thumbnail,
-        "message": f"{'AI embedding' if ai_used else 'Placeholder'} registered for {angle} angle.",
+        "message": f"AI embedding registered for {angle} angle.",
     }
 
 
@@ -204,3 +208,29 @@ async def delete_face_embedding(
     await db.commit()
 
     return {"message": f"Removed '{angle}' face registration for student {student_id}"}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# GET /face/status   — Debug endpoint: model loading state
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.get("/status")
+async def face_service_status(
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Returns current InsightFace model loading status.
+    Use this to debug face recognition issues — call this endpoint to see
+    whether the model loaded, is still loading, or failed with an error.
+    """
+    return {
+        "initialized": face_service.initialized,
+        "loading": face_service._loading,
+        "load_error": face_service.load_error,
+        "status": (
+            "ready" if face_service.initialized
+            else "loading" if face_service._loading
+            else f"failed: {face_service.load_error}" if face_service.load_error
+            else "not_started"
+        ),
+    }

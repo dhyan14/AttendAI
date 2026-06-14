@@ -505,10 +505,11 @@ async def take_attendance_ai(
         warning = None
     elif model_available and no_embeddings:
         mode    = "mock_no_embeddings"
-        warning = "⚠ No face photos registered for students in this class. Go to Admin → Faces and register Front, Left, Right photos for each student first."
+        warning = "⚠ No face photos registered for students in this class. Go to Admin → Faces tab and register Front, Left, Right photos for each student first."
     elif not model_available:
+        load_err = face_service.load_error or "unknown"
         mode    = "mock_model_loading"
-        warning = "⚠ AI model is still loading (first deploy takes ~60s). Refresh and try again — or results here are estimated."
+        warning = f"⚠ AI model failed to load: {load_err}. The server may be out of memory or insightface install is broken."
     else:
         mode    = "mock"
         warning = "⚠ Using estimated attendance — register student faces for accurate AI results."

@@ -5,36 +5,51 @@ from typing import Optional
 
 
 class FaceService:
-    """InsightFace wrapper — initialized on app startup."""
+    """InsightFace wrapper — lazily initialized on first use."""
 
     def __init__(self):
         self.model = None
         self.initialized = False
-        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        self.load_error: Optional[str] = None
+        self._loading = False  # guard against concurrent init calls
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
     def _load_model(self):
         """Blocking model load — runs in a thread pool."""
         from insightface.app import FaceAnalysis
+        import os
+        # Force model download dir to /tmp (writable on all platforms)
+        os.environ.setdefault("INSIGHTFACE_HOME", "/tmp/insightface")
         model = FaceAnalysis(
             name="buffalo_s",
             allowed_modules=["detection", "recognition"],
-            providers=["CPUExecutionProvider"]
+            providers=["CPUExecutionProvider"],
+            root="/tmp/insightface",
         )
-        # Use smaller det_size to reduce RAM usage on Railway
         model.prepare(ctx_id=-1, det_size=(320, 320))
         return model
 
     async def initialize(self):
-        """Load InsightFace buffalo_s model in a thread (non-blocking)."""
-        loop = asyncio.get_event_loop()
+        """Load InsightFace buffalo_s model in a thread (non-blocking).
+        Uses get_running_loop() which works correctly in Python 3.10+.
+        Guards against concurrent init calls.
+        """
+        if self.initialized or self._loading:
+            return
+        self._loading = True
         try:
+            loop = asyncio.get_running_loop()
             print("[FaceService] Loading InsightFace buffalo_s model...")
             self.model = await loop.run_in_executor(self._executor, self._load_model)
             self.initialized = True
+            self.load_error = None
             print("✅ InsightFace buffalo_s model ready")
         except Exception as e:
-            print(f"⚠️ InsightFace load failed: {e}")
+            self.load_error = str(e)
             self.initialized = False
+            print(f"⚠️ InsightFace load failed: {e}")
+        finally:
+            self._loading = False
 
     def _decode_image(self, image_bytes: bytes):
         import cv2
@@ -74,7 +89,7 @@ class FaceService:
         self,
         probe_embeddings: list,
         stored_embeddings: list,   # [{"student_id": str, "embedding": list[float], ...}]
-        threshold: float = 0.45,
+        threshold: float = 0.40,
     ) -> list:
         """
         Match detected faces against stored student embeddings using cosine similarity.
@@ -88,7 +103,7 @@ class FaceService:
             [s["embedding"] for s in stored_embeddings], dtype=np.float32
         )
 
-        # Normalize
+        # Normalize rows to unit vectors
         probe_norm  = probe_arr  / (np.linalg.norm(probe_arr,  axis=1, keepdims=True) + 1e-8)
         stored_norm = stored_vecs / (np.linalg.norm(stored_vecs, axis=1, keepdims=True) + 1e-8)
 
