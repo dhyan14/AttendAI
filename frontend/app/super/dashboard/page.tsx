@@ -977,14 +977,12 @@ export default function SuperDashboard() {
 
       {/* Bottom Nav */}
       <div style={{
-        position: "fixed", bottom: 0, left: 0, right: 0,
+        position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)",
         background: "rgba(8,7,15,0.97)", backdropFilter: "blur(20px)",
         borderTop: "1px solid var(--border)",
         display: "flex", padding: "10px 0 22px",
-        maxWidth: 430, margin: "0 auto",
-        left: "50%", transform: "translateX(-50%)",
-        width: "100%",
-      } as React.CSSProperties}>
+        maxWidth: 430, width: "100%",
+      }}>
         {topNav.map(n => (
           <button
             key={n.id}
