@@ -1,7 +1,8 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, Calendar, Users, User, ShieldAlert, FileText, Building2, Camera } from "lucide-react";
+import { Home, Calendar, Users, User, ShieldAlert, FileText, Building2, Camera, BookOpen } from "lucide-react";
+
 
 interface NavItem {
   href: string;
@@ -28,17 +29,17 @@ const studentNav: NavItem[] = [
 
 const deptAdminNav: NavItem[] = [
   { href: "/admin/dashboard",      label: "Home",     icon: <Home size={22} /> },
+  { href: "/admin/subjects",       label: "Subjects", icon: <BookOpen size={22} /> },
   { href: "/admin/students",       label: "Students", icon: <Users size={22} /> },
   { href: "/admin/face-register",  label: "Faces",    icon: <Camera size={22} /> },
-  { href: "/admin/disputes",       label: "Disputes", icon: <ShieldAlert size={22} /> },
   { href: "/admin/reports",        label: "Reports",  icon: <FileText size={22} /> },
 ];
 
 const orgAdminNav: NavItem[] = [
   { href: "/admin/dashboard",      label: "Home",     icon: <Home size={22} /> },
   { href: "/admin/departments",    label: "Depts",    icon: <Building2 size={22} /> },
+  { href: "/admin/subjects",       label: "Subjects", icon: <BookOpen size={22} /> },
   { href: "/admin/face-register",  label: "Faces",    icon: <Camera size={22} /> },
-  { href: "/admin/disputes",       label: "Disputes", icon: <ShieldAlert size={22} /> },
   { href: "/admin/reports",        label: "Reports",  icon: <FileText size={22} /> },
 ];
 
