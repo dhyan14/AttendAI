@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch, API_URL } from "@/lib/api";
 import TopBar from "@/components/layout/TopBar";
@@ -33,7 +33,7 @@ interface StudentRecord {
 
 const API_BASE = API_URL;
 
-export default function TakeAttendancePage() {
+function TakeAttendanceInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -687,5 +687,19 @@ export default function TakeAttendancePage() {
 
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
+  );
+}
+
+export default function TakeAttendancePage() {
+  return (
+    <Suspense fallback={
+      <div style={{ minHeight: "100dvh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ width: 48, height: 48, borderRadius: 14, background: "var(--accent-dim)", border: "1px solid var(--border-accent)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <span style={{ color: "var(--accent)", fontSize: 22, animation: "spin 1s linear infinite", display: "block" }}>⟳</span>
+        </div>
+      </div>
+    }>
+      <TakeAttendanceInner />
+    </Suspense>
   );
 }
