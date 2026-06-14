@@ -16,15 +16,28 @@ class FaceService:
 
     def _load_model(self):
         """Blocking model load — runs in a thread pool."""
-        from insightface.app import FaceAnalysis
         import os
-        # Force model download dir to /tmp (writable on all platforms)
-        os.environ.setdefault("INSIGHTFACE_HOME", "/tmp/insightface")
+        import traceback as tb
+
+        # Use the models baked into the image at build time (no runtime download needed)
+        MODEL_ROOT = "/app/insightface_models"
+        os.environ["INSIGHTFACE_HOME"] = MODEL_ROOT
+
+        print(f"[FaceService] Model root: {MODEL_ROOT}")
+        # Print what files are present so we can diagnose missing-file issues in Railway logs
+        models_dir = os.path.join(MODEL_ROOT, "models", "buffalo_s")
+        if os.path.isdir(models_dir):
+            files = os.listdir(models_dir)
+            print(f"[FaceService] buffalo_s files: {files}")
+        else:
+            print(f"[FaceService] ⚠ buffalo_s dir not found at {models_dir}")
+
+        from insightface.app import FaceAnalysis
         model = FaceAnalysis(
             name="buffalo_s",
             allowed_modules=["detection", "recognition"],
             providers=["CPUExecutionProvider"],
-            root="/tmp/insightface",
+            root=MODEL_ROOT,
         )
         model.prepare(ctx_id=-1, det_size=(320, 320))
         return model
@@ -45,11 +58,14 @@ class FaceService:
             self.load_error = None
             print("✅ InsightFace buffalo_s model ready")
         except Exception as e:
-            self.load_error = str(e)
+            import traceback
+            full_tb = traceback.format_exc()
+            self.load_error = f"{type(e).__name__}: {e}"
             self.initialized = False
-            print(f"⚠️ InsightFace load failed: {e}")
+            print(f"⚠️ InsightFace load failed:\n{full_tb}")
         finally:
             self._loading = False
+
 
     def _decode_image(self, image_bytes: bytes):
         import cv2
