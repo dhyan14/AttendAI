@@ -7,6 +7,7 @@ import {
   Plus, Trash2, ToggleLeft, ToggleRight, Loader2, ChevronRight,
   ChevronLeft, Check, X, GraduationCap, UserCog, CreditCard, Bell,
   Lock, Server, BarChart3, AlertTriangle, UserCheck, BookOpen,
+  Upload, Download, FileSpreadsheet, CheckCircle2, XCircle,
 } from "lucide-react";
 
 /* ═══════════════════════════════════════════════════════════
@@ -42,7 +43,7 @@ interface UserRow {
 
 type TopSection = "overview" | "orgs" | "users" | "settings";
 type OrgTab     = "departments" | "faculty" | "students" | "admins";
-type ModalType  = "org" | "dept" | "student" | "faculty" | "admin" | null;
+type ModalType  = "org" | "dept" | "student" | "faculty" | "admin" | "bulk" | null;
 
 /* ═══════════════════════════════════════════════════════════
    MICRO COMPONENTS
@@ -198,6 +199,11 @@ export default function SuperDashboard() {
   const [fFN, setFFN] = useState(""); const [fFE, setFFE] = useState(""); const [fFDes, setFFDes] = useState(""); const [fFDept, setFFDept] = useState("");
   // ── Form: Admin
   const [fAE, setFAE] = useState(""); const [fAN, setFAN] = useState(""); const [fAR, setFAR] = useState<"org_admin"|"dept_admin">("org_admin"); const [fADept, setFADept] = useState("");
+  // ── Bulk import
+  const [bulkFile, setBulkFile]         = useState<File | null>(null);
+  const [bulkDeptId, setBulkDeptId]     = useState("");
+  const [bulkUploading, setBulkUploading] = useState(false);
+  const [bulkResult, setBulkResult]     = useState<{ total_rows: number; success_count: number; error_count: number; created: any[]; errors: any[] } | null>(null);
 
   /* ── Loaders ─────────────────────────────────────────────── */
   const loadStats = useCallback(async () => {
@@ -551,7 +557,25 @@ export default function SuperDashboard() {
                   <div style={{ fontWeight: 800, fontSize: 18, letterSpacing: -0.3 }}>Students</div>
                   <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>in {selectedOrg.name}</div>
                 </div>
-                <AddBtn label="Add" onClick={() => { setFSN(""); setFSR(""); setFSE(""); setFSEm(""); setFSD(""); setFSB(""); setFSSem(""); setFSDept(depts[0]?.id || ""); setModal("student"); }} />
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={() => {
+                      setBulkFile(null);
+                      setBulkResult(null);
+                      setBulkDeptId(depts[0]?.id || "");
+                      setModal("bulk");
+                    }}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 6, flexShrink: 0,
+                      background: "rgba(34,211,122,0.10)", border: "1px solid rgba(34,211,122,0.2)",
+                      borderRadius: 10, padding: "8px 14px",
+                      color: "#22d37a", fontSize: 13, fontWeight: 700, cursor: "pointer",
+                    }}
+                  >
+                    <FileSpreadsheet size={15} /> Import Excel
+                  </button>
+                  <AddBtn label="Add" onClick={() => { setFSN(""); setFSR(""); setFSE(""); setFSEm(""); setFSD(""); setFSB(""); setFSSem(""); setFSDept(depts[0]?.id || ""); setModal("student"); }} />
+                </div>
               </div>
 
               {orgDataLoading ? <Spinner /> : students.length === 0 ? (
@@ -684,6 +708,187 @@ export default function SuperDashboard() {
             <button className="btn btn-primary" onClick={createStudent} disabled={saving || !fSN || !fSR || !fSEm || !fSDept}>
               {saving ? <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> : <><Check size={15} /> Add Student</>}
             </button>
+          </Modal>
+        )}
+
+        {modal === "bulk" && (
+          <Modal title={`Bulk Import Students · ${selectedOrg.name}`} onClose={() => { closeModal(); if (bulkResult) { fetchStudents(selectedOrg.id); setBulkResult(null); } }}>
+            {/* Step 1 — Download template */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
+              <div style={{ padding: "14px", background: "rgba(124,111,224,0.07)", borderRadius: 12, border: "1px solid var(--border-accent)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                  <div style={{ width: 34, height: 34, borderRadius: 10, background: "var(--accent-dim)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <Download size={16} style={{ color: "var(--accent-2)" }} />
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 13 }}>Step 1 — Download Template</div>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Fill dept_id, name, email, roll_no for each student</div>
+                  </div>
+                </div>
+                <button
+                  onClick={async () => {
+                    const token = localStorage.getItem("token");
+                    const r = await fetch(
+                      `${process.env.NEXT_PUBLIC_API_URL || "https://attendai-production-f6cf.up.railway.app"}/admin/students/template`,
+                      { headers: { Authorization: `Bearer ${token}` } }
+                    );
+                    if (!r.ok) { showToast("✗ Could not download template"); return; }
+                    const blob = await r.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a"); a.href = url; a.download = "student_import_template.xlsx"; a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  style={{
+                    width: "100%", padding: "10px", borderRadius: 10, border: "1px solid var(--border-accent)",
+                    background: "var(--bg-card-2)", color: "var(--accent-2)", fontWeight: 700, fontSize: 13,
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  <Download size={15} /> Download student_import_template.xlsx
+                </button>
+              </div>
+
+              {/* dept_id helper */}
+              <div style={{ padding: "12px 14px", background: "rgba(34,211,122,0.05)", borderRadius: 10, border: "1px solid rgba(34,211,122,0.15)" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#22d37a", marginBottom: 6 }}>📋 Dept IDs in {selectedOrg.name}</div>
+                {depts.map(d => (
+                  <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                    <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{d.name}</span>
+                    <button
+                      onClick={() => { navigator.clipboard.writeText(d.id); showToast(`✓ Copied ${d.code} ID`); }}
+                      style={{ fontSize: 10, background: "none", border: "1px solid var(--border)", borderRadius: 6, padding: "2px 8px", color: "var(--text-muted)", cursor: "pointer", fontFamily: "monospace" }}
+                    >
+                      {d.id.substring(0, 8)}… copy
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {/* Step 2 — Upload */}
+              <div style={{ padding: "14px", background: "rgba(255,255,255,0.02)", borderRadius: 12, border: `2px dashed ${bulkFile ? "#22d37a" : "var(--border)"}` }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                  <div style={{ width: 34, height: 34, borderRadius: 10, background: "rgba(34,211,122,0.10)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <Upload size={16} style={{ color: "#22d37a" }} />
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 13 }}>Step 2 — Upload Filled File</div>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>.xlsx, .xls, or .csv · max 500 rows</div>
+                  </div>
+                </div>
+                <label style={{ display: "block", cursor: "pointer" }}>
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    style={{ display: "none" }}
+                    onChange={e => { const f = e.target.files?.[0] || null; setBulkFile(f); setBulkResult(null); }}
+                  />
+                  <div style={{
+                    padding: "12px", borderRadius: 10, textAlign: "center",
+                    background: bulkFile ? "rgba(34,211,122,0.08)" : "var(--bg-card-2)",
+                    color: bulkFile ? "#22d37a" : "var(--text-muted)",
+                    fontSize: 13, fontWeight: 600, border: "1px solid var(--border)",
+                  }}>
+                    {bulkFile ? `✓ ${bulkFile.name}` : "Tap to select file"}
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            {/* Upload button */}
+            {!bulkResult && (
+              <button
+                className="btn btn-primary"
+                disabled={!bulkFile || bulkUploading}
+                onClick={async () => {
+                  if (!bulkFile) return;
+                  setBulkUploading(true);
+                  try {
+                    const token = localStorage.getItem("token");
+                    const form = new FormData();
+                    form.append("file", bulkFile);
+                    const r = await fetch(
+                      `${process.env.NEXT_PUBLIC_API_URL || "https://attendai-production-f6cf.up.railway.app"}/admin/students/bulk`,
+                      { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: form }
+                    );
+                    if (!r.ok) { const e = await r.json(); showToast("✗ " + (e.detail || "Upload failed")); }
+                    else { const res = await r.json(); setBulkResult(res); }
+                  } catch (e: any) { showToast("✗ " + e.message); }
+                  finally { setBulkUploading(false); }
+                }}
+              >
+                {bulkUploading
+                  ? <><Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> Processing...</>
+                  : <><Upload size={15} /> Upload & Import</>}
+              </button>
+            )}
+
+            {/* Results */}
+            {bulkResult && (
+              <div style={{ marginTop: 4 }}>
+                {/* Summary pills */}
+                <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+                  <div style={{ flex: 1, padding: "10px", background: "rgba(34,211,122,0.10)", borderRadius: 10, textAlign: "center" }}>
+                    <div style={{ fontSize: 22, fontWeight: 900, color: "#22d37a" }}>{bulkResult.success_count}</div>
+                    <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>Imported</div>
+                  </div>
+                  <div style={{ flex: 1, padding: "10px", background: "rgba(240,90,90,0.10)", borderRadius: 10, textAlign: "center" }}>
+                    <div style={{ fontSize: 22, fontWeight: 900, color: "var(--danger)" }}>{bulkResult.error_count}</div>
+                    <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>Skipped</div>
+                  </div>
+                  <div style={{ flex: 1, padding: "10px", background: "rgba(255,255,255,0.04)", borderRadius: 10, textAlign: "center" }}>
+                    <div style={{ fontSize: 22, fontWeight: 900, color: "var(--text-secondary)" }}>{bulkResult.total_rows}</div>
+                    <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>Total rows</div>
+                  </div>
+                </div>
+
+                {/* Error rows */}
+                {bulkResult.errors.length > 0 && (
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "var(--danger)", marginBottom: 6 }}>⚠ Skipped rows</div>
+                    {bulkResult.errors.map((e: any, i: number) => (
+                      <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "7px 10px", background: "rgba(240,90,90,0.07)", borderRadius: 8, marginBottom: 4 }}>
+                        <XCircle size={13} style={{ color: "var(--danger)", flexShrink: 0, marginTop: 1 }} />
+                        <div style={{ flex: 1 }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-secondary)" }}>{e.row} · {e.email || e.roll_no}</span>
+                          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 1 }}>{e.error}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Success rows */}
+                {bulkResult.created.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#22d37a", marginBottom: 6 }}>✓ Successfully imported</div>
+                    {bulkResult.created.slice(0, 10).map((s: any, i: number) => (
+                      <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", padding: "6px 10px", background: "rgba(34,211,122,0.06)", borderRadius: 8, marginBottom: 3 }}>
+                        <CheckCircle2 size={12} style={{ color: "#22d37a", flexShrink: 0 }} />
+                        <span style={{ fontSize: 12, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name} ({s.roll_no})</span>
+                        <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{s.email}</span>
+                      </div>
+                    ))}
+                    {bulkResult.created.length > 10 && (
+                      <div style={{ fontSize: 11, color: "var(--text-muted)", textAlign: "center", padding: "6px 0" }}>+ {bulkResult.created.length - 10} more imported successfully</div>
+                    )}
+                  </div>
+                )}
+
+                <button
+                  className="btn btn-primary"
+                  style={{ marginTop: 14 }}
+                  onClick={() => {
+                    closeModal();
+                    fetchStudents(selectedOrg.id);
+                    setBulkResult(null);
+                    loadStats();
+                  }}
+                >
+                  <Check size={15} /> Done — Refresh Student List
+                </button>
+              </div>
+            )}
           </Modal>
         )}
 

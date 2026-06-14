@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_, delete as sql_delete
 from app.database import get_db
@@ -12,6 +12,8 @@ from pydantic import BaseModel
 from typing import Optional, List
 import uuid
 import bcrypt
+import io
+import pandas as pd
 
 router = APIRouter()
 
@@ -497,6 +499,243 @@ async def delete_student(
     await db.commit()
     return {"message": f"Student '{name}' deleted"}
 
+
+# ═══════════════════════════════════════════════════════════
+# BULK STUDENT IMPORT (Excel)
+# ═══════════════════════════════════════════════════════════
+
+@router.get("/students/template")
+async def download_student_template(
+    current_user=Depends(require_super_admin)
+):
+    """
+    Download an Excel template (.xlsx) for bulk student import.
+    Includes a sample row and a helper sheet explaining each column.
+    """
+    wb = __import__("openpyxl").Workbook()
+
+    # ── Main data sheet ──────────────────────────────────────
+    ws = wb.active
+    ws.title = "Students"
+
+    headers = [
+        "name", "roll_no", "enrollment_no", "email",
+        "division", "batch", "semester", "dept_id"
+    ]
+    header_fill    = __import__("openpyxl.styles", fromlist=["PatternFill"]).PatternFill(start_color="6C63FF", end_color="6C63FF", fill_type="solid")
+    header_font    = __import__("openpyxl.styles", fromlist=["Font"]).Font(bold=True, color="FFFFFF")
+    from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+
+    thin = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"),  bottom=Side(style="thin")
+    )
+
+    for col_idx, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_idx, value=header)
+        cell.fill      = PatternFill(start_color="6C63FF", end_color="6C63FF", fill_type="solid")
+        cell.font      = Font(bold=True, color="FFFFFF")
+        cell.alignment = Alignment(horizontal="center")
+        cell.border    = thin
+        ws.column_dimensions[
+            __import__("openpyxl.utils", fromlist=["get_column_letter"]).get_column_letter(col_idx)
+        ].width = 22
+
+    # Sample rows
+    sample_rows = [
+        ["Rahul Sharma",  "CS001", "EN2024001", "rahul@college.edu",   "A", "B1", 4, "<paste-dept-id-here>"],
+        ["Priya Patel",   "CS002", "EN2024002", "priya@college.edu",   "A", "B1", 4, "<paste-dept-id-here>"],
+        ["Amit Shah",     "CS003", "",           "amit@college.edu",    "B", "B2", 4, "<paste-dept-id-here>"],
+    ]
+    for row_data in sample_rows:
+        ws.append(row_data)
+
+    # Freeze first row
+    ws.freeze_panes = "A2"
+
+    # ── Instructions sheet ───────────────────────────────────
+    info_ws = wb.create_sheet("Instructions")
+    info_ws.column_dimensions["A"].width = 22
+    info_ws.column_dimensions["B"].width = 60
+
+    info_ws.cell(1, 1, "Column").font        = Font(bold=True)
+    info_ws.cell(1, 2, "Description").font   = Font(bold=True)
+
+    instructions = [
+        ("name",           "Required. Full name of the student."),
+        ("roll_no",        "Required. Unique roll number within the department."),
+        ("enrollment_no",  "Optional. Enrollment / admission number."),
+        ("email",          "Required. Unique email — used as login username."),
+        ("division",       "Optional. e.g. A, B, C"),
+        ("batch",          "Optional. e.g. B1, B2, All"),
+        ("semester",       "Optional. Integer, e.g. 4"),
+        ("dept_id",        "Required. UUID of the department. Copy from the Super Admin panel URL or use the Departments tab."),
+        ("", ""),
+        ("Default password", "Student@123  (students must change on first login)"),
+        ("Max rows",         "500 students per upload"),
+        ("Duplicates",       "Rows with an existing email are skipped with an error message."),
+    ]
+    for r_idx, (col, desc) in enumerate(instructions, 2):
+        info_ws.cell(r_idx, 1, col).font  = Font(bold=bool(col))
+        info_ws.cell(r_idx, 2, desc)
+
+    # Serialise to bytes
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    return Response(
+        content=buf.read(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=student_import_template.xlsx"},
+    )
+
+
+@router.post("/students/bulk")
+async def bulk_import_students(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_super_admin)
+):
+    """
+    Bulk-import students from an Excel (.xlsx) or CSV file.
+    Returns per-row results: success list + error list.
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+
+    ext = file.filename.rsplit(".", 1)[-1].lower()
+    if ext not in ("xlsx", "xls", "csv"):
+        raise HTTPException(status_code=400, detail="Only .xlsx, .xls, or .csv files are accepted")
+
+    contents = await file.read()
+    buf = io.BytesIO(contents)
+
+    try:
+        if ext == "csv":
+            df = pd.read_csv(buf, dtype=str)
+        else:
+            df = pd.read_excel(buf, sheet_name="Students", dtype=str)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Failed to parse file: {str(e)}")
+
+    required_cols = {"name", "roll_no", "email", "dept_id"}
+    missing = required_cols - set(df.columns.str.strip().str.lower())
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Missing required columns: {', '.join(sorted(missing))}. Use the downloaded template."
+        )
+
+    # Normalise column names
+    df.columns = df.columns.str.strip().str.lower()
+    df = df.where(pd.notnull(df), None)  # NaN → None
+    df = df.head(500)                    # cap at 500 rows
+
+    results_ok:  list[dict] = []
+    results_err: list[dict] = []
+
+    for row_num, row in df.iterrows():
+        row_label = f"Row {int(row_num) + 2}"  # +2 because header=row 1, 0-indexed
+
+        name     = (row.get("name")     or "").strip()
+        roll_no  = (row.get("roll_no")  or "").strip()
+        email    = (row.get("email")    or "").strip().lower()
+        dept_id  = (row.get("dept_id")  or "").strip()
+        enroll   = (row.get("enrollment_no") or "").strip() or None
+        division = (row.get("division") or "").strip() or None
+        batch    = (row.get("batch")    or "").strip() or None
+        sem_raw  = row.get("semester")
+        semester: Optional[int] = None
+        if sem_raw:
+            try: semester = int(float(str(sem_raw)))
+            except ValueError: pass
+
+        # Basic validation
+        if not name:
+            results_err.append({"row": row_label, "email": email, "error": "'name' is required"})
+            continue
+        if not roll_no:
+            results_err.append({"row": row_label, "email": email, "error": "'roll_no' is required"})
+            continue
+        if not email:
+            results_err.append({"row": row_label, "roll_no": roll_no, "error": "'email' is required"})
+            continue
+        if not dept_id or dept_id.startswith("<"):
+            results_err.append({"row": row_label, "email": email, "error": "'dept_id' is missing or still placeholder"})
+            continue
+
+        # Validate dept exists
+        try:
+            dept_uuid = uuid.UUID(dept_id)
+        except ValueError:
+            results_err.append({"row": row_label, "email": email, "error": f"'dept_id' is not a valid UUID: {dept_id}"})
+            continue
+
+        dept = await db.get(Department, dept_uuid)
+        if not dept:
+            results_err.append({"row": row_label, "email": email, "error": f"Department '{dept_id}' not found"})
+            continue
+
+        # Check email uniqueness
+        existing = await db.execute(select(User).where(User.email == email))
+        if existing.scalar_one_or_none():
+            results_err.append({"row": row_label, "email": email, "error": f"Email '{email}' already exists"})
+            continue
+
+        # Check roll_no uniqueness within dept
+        existing_roll = await db.execute(
+            select(Student).where(Student.dept_id == dept_uuid, Student.roll_no == roll_no)
+        )
+        if existing_roll.scalar_one_or_none():
+            results_err.append({"row": row_label, "email": email, "error": f"Roll No '{roll_no}' already exists in this department"})
+            continue
+
+        # Create user + student
+        try:
+            user = User(
+                email=email,
+                password_hash=_hash("Student@123"),
+                role=UserRole.student,
+                org_id=dept.org_id,
+                is_active=True,
+            )
+            db.add(user)
+            await db.flush()
+
+            student = Student(
+                user_id=user.id,
+                name=name,
+                roll_no=roll_no,
+                enrollment_no=enroll,
+                division=division,
+                batch=batch,
+                semester=semester,
+                dept_id=dept_uuid,
+            )
+            db.add(student)
+            await db.flush()
+
+            results_ok.append({"row": row_label, "name": name, "email": email, "roll_no": roll_no})
+
+        except Exception as e:
+            await db.rollback()
+            results_err.append({"row": row_label, "email": email, "error": str(e)})
+            continue
+
+    try:
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Commit failed: {str(e)}")
+
+    return {
+        "total_rows":    len(df),
+        "success_count": len(results_ok),
+        "error_count":   len(results_err),
+        "created":       results_ok,
+        "errors":        results_err,
+    }
 
 # ═══════════════════════════════════════════════════════════
 # FACULTY
