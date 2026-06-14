@@ -36,7 +36,7 @@ export default function LoginPage() {
         student: "/student/home",
         dept_admin: "/admin/dashboard",
         org_admin: "/admin/dashboard",
-        super_admin: "/admin/dashboard",
+        super_admin: "/super/dashboard",
       };
       router.push(routes[data.role] ?? "/faculty/home");
     } catch (err: unknown) {
