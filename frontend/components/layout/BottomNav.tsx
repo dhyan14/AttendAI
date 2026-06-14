@@ -27,20 +27,21 @@ const studentNav: NavItem[] = [
 ];
 
 const deptAdminNav: NavItem[] = [
-  { href: "/admin/dashboard",  label: "Home",      icon: <Home size={22} /> },
-  { href: "/admin/students",   label: "Students",  icon: <Users size={22} /> },
-  { href: "/admin/faculty",    label: "Faculty",   icon: <User size={22} /> },
-  { href: "/admin/disputes",   label: "Disputes",  icon: <ShieldAlert size={22} /> },
-  { href: "/admin/reports",    label: "Reports",   icon: <FileText size={22} /> },
+  { href: "/admin/dashboard",      label: "Home",     icon: <Home size={22} /> },
+  { href: "/admin/students",       label: "Students", icon: <Users size={22} /> },
+  { href: "/admin/face-register",  label: "Faces",    icon: <Camera size={22} /> },
+  { href: "/admin/disputes",       label: "Disputes", icon: <ShieldAlert size={22} /> },
+  { href: "/admin/reports",        label: "Reports",  icon: <FileText size={22} /> },
 ];
 
 const orgAdminNav: NavItem[] = [
-  { href: "/admin/dashboard",   label: "Home",     icon: <Home size={22} /> },
-  { href: "/admin/departments", label: "Depts",    icon: <Building2 size={22} /> },
-  { href: "/admin/students",    label: "Students", icon: <Users size={22} /> },
-  { href: "/admin/disputes",    label: "Disputes", icon: <ShieldAlert size={22} /> },
-  { href: "/admin/reports",     label: "Reports",  icon: <FileText size={22} /> },
+  { href: "/admin/dashboard",      label: "Home",     icon: <Home size={22} /> },
+  { href: "/admin/departments",    label: "Depts",    icon: <Building2 size={22} /> },
+  { href: "/admin/face-register",  label: "Faces",    icon: <Camera size={22} /> },
+  { href: "/admin/disputes",       label: "Disputes", icon: <ShieldAlert size={22} /> },
+  { href: "/admin/reports",        label: "Reports",  icon: <FileText size={22} /> },
 ];
+
 
 export default function BottomNav({ role }: BottomNavProps) {
   const pathname = usePathname();

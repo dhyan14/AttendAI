@@ -11,11 +11,15 @@ export async function apiFetch(
     ? localStorage.getItem("access_token")
     : null;
 
+  // Don't set Content-Type for FormData — browser sets it with the correct boundary
+  const isFormData = options.body instanceof FormData;
+
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
+    ...(isFormData ? {} : { "Content-Type": "application/json" }),
     ...(options.headers as Record<string, string>),
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
   return fetch(`${API_URL}${path}`, { ...options, headers });
 }
+

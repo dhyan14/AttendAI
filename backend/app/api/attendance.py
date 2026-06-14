@@ -9,8 +9,8 @@ import base64
 
 from app.database import get_db
 from app.models import (
-    Lecture, AttendanceRecord, Student, Subject, Faculty, User,
-    AttendanceStatus, AttendanceSource, LectureStatus
+    Lecture, AttendanceRecord, Student, Subject, Faculty, User, Department,
+    AttendanceStatus, AttendanceSource, LectureStatus, FaceEmbedding,
 )
 from app.api.deps import get_current_user, require_faculty
 
@@ -90,14 +90,12 @@ async def list_lectures(
     )
 
     if current_user.role.value == "faculty":
-        # Get faculty profile
         fac_res = await db.execute(select(Faculty).where(Faculty.user_id == current_user.id))
         fac = fac_res.scalar_one_or_none()
         if not fac:
             return []
         query = query.where(Lecture.faculty_id == fac.id)
     elif current_user.role.value == "student":
-        # Students see lectures in their department and division
         stud_res = await db.execute(select(Student).where(Student.user_id == current_user.id))
         student = stud_res.scalar_one_or_none()
         if not student:
@@ -146,7 +144,6 @@ async def create_lecture(
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
 
-    # Fetch students in this division/batch/department
     students_query = select(Student).where(Student.dept_id == subject.dept_id)
     if req.division:
         students_query = students_query.where(Student.division == req.division)
@@ -170,7 +167,6 @@ async def create_lecture(
     db.add(lecture)
     await db.flush()
 
-    # Initialize all students as absent by default
     for student in students:
         rec = AttendanceRecord(
             lecture_id=lecture.id,
@@ -222,7 +218,6 @@ async def get_lecture_details(
     if not row:
         raise HTTPException(status_code=404, detail="Lecture not found")
 
-    # Fetch attendance records
     rec_query = select(
         AttendanceRecord,
         Student.name.label("student_name"),
@@ -271,13 +266,12 @@ async def finalize_lecture(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_faculty)
 ):
-    """Finalize attendance records for a lecture. Set present_student_ids to present, and others to absent."""
+    """Finalize attendance records for a lecture."""
     lecture_res = await db.execute(select(Lecture).where(Lecture.id == lecture_id))
     lecture = lecture_res.scalar_one_or_none()
     if not lecture:
         raise HTTPException(status_code=404, detail="Lecture not found")
 
-    # Fetch all records for this lecture
     records_res = await db.execute(
         select(AttendanceRecord).where(AttendanceRecord.lecture_id == lecture.id)
     )
@@ -287,15 +281,12 @@ async def finalize_lecture(
     present_count = 0
 
     for record in records:
-        was_present = record.status == AttendanceStatus.present
+        was_present   = record.status == AttendanceStatus.present
         is_now_present = record.student_id in present_uuids
-        
-        # If status changed, update it
         if was_present != is_now_present:
             record.status = AttendanceStatus.present if is_now_present else AttendanceStatus.absent
             record.source = AttendanceSource.manual
             record.confidence = 1.0 if is_now_present else 0.0
-            
         if is_now_present:
             present_count += 1
 
@@ -306,85 +297,156 @@ async def finalize_lecture(
     return {"message": "Attendance successfully finalized", "present_count": present_count}
 
 
+# ─── AI Attendance (real face recognition) ─────────────────
+
+
 @router.post("/take-ai")
 async def take_attendance_ai(
     lecture_id: str = Form(...),
-    file: UploadFile = File(...),
+    files: List[UploadFile] = File(...),   # up to 5 classroom images
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_faculty)
 ):
     """
-    Take AI-based attendance using face recognition.
-    
-    Accepts a classroom photo, runs face detection and matching against enrolled
-    students' face embeddings, and marks attendance accordingly.
-    
-    Currently uses a realistic deterministic mock that:
-    - Reads the actual image bytes (validating the upload works)
-    - Marks 4/5 students present (80% attendance rate)
-    - Returns per-student confidence scores
-    
-    In production, replace the mock section with your face recognition service call.
+    Take AI-based attendance using real face recognition.
+
+    Accepts up to 5 classroom photos. For each photo:
+      1. Run InsightFace to detect all faces and extract 512-dim embeddings.
+      2. Cosine-similarity match against all enrolled students' face embeddings.
+      3. Mark student present if best match confidence >= 0.45.
+
+    Falls back to deterministic mock (80% attendance) if InsightFace is unavailable.
     """
+    from app.services.face_service import face_service
     import random
 
-    lecture_res = await db.execute(select(Lecture).where(Lecture.id == lecture_id))
-    lecture = lecture_res.scalar_one_or_none()
+    # ── Validate lecture ──────────────────────────────────────────────────
+    lec_uuid = uuid.UUID(lecture_id)
+    lec_res = await db.execute(select(Lecture).where(Lecture.id == lec_uuid))
+    lecture = lec_res.scalar_one_or_none()
     if not lecture:
         raise HTTPException(status_code=404, detail="Lecture not found")
 
-    # Read and validate the uploaded image
-    image_bytes = await file.read()
-    if not image_bytes:
-        raise HTTPException(status_code=400, detail="Empty image file uploaded")
+    if not files:
+        raise HTTPException(status_code=400, detail="No images provided")
+    files = files[:5]   # cap at 5
 
-    image_size_kb = len(image_bytes) / 1024
-    content_type = file.content_type or "image/jpeg"
-
-    # Encode image as base64 for returning as a preview thumbnail
-    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-    image_data_url = f"data:{content_type};base64,{image_b64}"
-
-    # Fetch all attendance records for this lecture
-    records_res = await db.execute(
+    # ── Load attendance records + student info ───────────────────────────
+    rec_res = await db.execute(
         select(AttendanceRecord, Student.name.label("student_name"), Student.roll_no.label("roll_no"))
         .join(Student, Student.id == AttendanceRecord.student_id)
-        .where(AttendanceRecord.lecture_id == lecture.id)
+        .where(AttendanceRecord.lecture_id == lec_uuid)
         .order_by(Student.roll_no)
     )
-    rec_rows = records_res.all()
-
+    rec_rows = rec_res.all()
     if not rec_rows:
         raise HTTPException(status_code=404, detail="No students enrolled for this lecture")
 
-    # ─── AI Detection (Mock Implementation) ────────────────
-    # In production: replace this block with actual face recognition pipeline
-    # e.g. call InsightFace service, match embeddings via pgvector cosine similarity
-    # ────────────────────────────────────────────────────────
+    student_ids = [str(r.AttendanceRecord.student_id) for r in rec_rows]
+
+    # ── Load face embeddings for enrolled students ───────────────────────
+    emb_res = await db.execute(
+        select(FaceEmbedding).where(
+            FaceEmbedding.student_id.in_([uuid.UUID(sid) for sid in student_ids])
+        )
+    )
+    stored_embs = emb_res.scalars().all()
+
+    stored_list = [
+        {"student_id": str(fe.student_id), "embedding": fe.embedding}
+        for fe in stored_embs
+        if fe.embedding and any(v != 0.0 for v in fe.embedding)  # skip placeholder zeros
+    ]
+
+    # ── AI Mode vs. Mock Mode ────────────────────────────────────────────
+    use_ai = face_service.initialized and len(stored_list) > 0
+
+    detected_student_ids: set[str] = set()
+    image_previews: list[str] = []
+    ai_confidences: dict[str, float] = {}   # student_id → confidence
+
+    if use_ai:
+        # Real InsightFace recognition
+        for upload in files:
+            raw = await upload.read()
+            if not raw:
+                continue
+            # thumbnail for preview
+            try:
+                from PIL import Image
+                import io as _io
+                img_pil = Image.open(_io.BytesIO(raw)).convert("RGB")
+                img_pil.thumbnail((480, 360))
+                buf = _io.BytesIO()
+                img_pil.save(buf, format="JPEG", quality=60)
+                b64 = base64.b64encode(buf.getvalue()).decode()
+                image_previews.append(f"data:image/jpeg;base64,{b64}")
+            except Exception:
+                pass
+
+            try:
+                probe_embeddings_raw = face_service.get_embeddings(raw)
+                probe_vecs = [emb for (_bbox, emb) in probe_embeddings_raw]
+                matches = face_service.match_faces(probe_vecs, stored_list, threshold=0.45)
+                for m in matches:
+                    sid = m["student_id"]
+                    conf = m["confidence"]
+                    # keep highest confidence across all photos
+                    if sid not in ai_confidences or conf > ai_confidences[sid]:
+                        ai_confidences[sid] = conf
+                        detected_student_ids.add(sid)
+            except Exception as e:
+                print(f"[AI] Recognition error on image: {e}")
+                # continue with other images
+
+    else:
+        # ── Mock fallback ─────────────────────────────────────────────────
+        # Read all files for previews only
+        total_size = 0
+        for upload in files:
+            raw = await upload.read()
+            total_size += len(raw)
+            try:
+                from PIL import Image
+                import io as _io
+                img_pil = Image.open(_io.BytesIO(raw)).convert("RGB")
+                img_pil.thumbnail((480, 360))
+                buf = _io.BytesIO()
+                img_pil.save(buf, format="JPEG", quality=60)
+                b64 = base64.b64encode(buf.getvalue()).decode()
+                image_previews.append(f"data:image/jpeg;base64,{b64}")
+            except Exception:
+                pass
+
+        rng = random.Random(total_size)
+        for i, sid in enumerate(student_ids):
+            is_present = (i % 5) != (len(student_ids) - 1) % 5 if len(student_ids) > 1 else True
+            if is_present:
+                detected_student_ids.add(sid)
+                ai_confidences[sid] = round(rng.uniform(0.72, 0.95), 3)
+
+    # ── Apply results to attendance records ──────────────────────────────
     detection_results = []
     present_count = 0
-    
-    # Seed random with image size for determinism (same photo = same result)
-    rng = random.Random(int(image_size_kb * 100))
-    
-    for i, row in enumerate(rec_rows):
+
+    for row in rec_rows:
         record = row.AttendanceRecord
-        # 80% detection rate - last student in each group of 5 is marked absent
-        is_detected = (i % 5) != (len(rec_rows) - 1) % 5 if len(rec_rows) > 1 else True
-        confidence = round(rng.uniform(0.82, 0.97), 3) if is_detected else round(rng.uniform(0.08, 0.22), 3)
-        
-        record.status = AttendanceStatus.present if is_detected else AttendanceStatus.absent
+        sid = str(record.student_id)
+        is_present = sid in detected_student_ids
+        confidence = ai_confidences.get(sid, round(random.uniform(0.05, 0.20), 3) if not use_ai else 0.0)
+
+        record.status = AttendanceStatus.present if is_present else AttendanceStatus.absent
         record.source = AttendanceSource.auto
         record.confidence = confidence
-        
-        if is_detected:
+
+        if is_present:
             present_count += 1
 
         detection_results.append({
-            "student_id": str(record.student_id),
+            "student_id": sid,
             "student_name": row.student_name,
             "roll_no": row.roll_no,
-            "status": "present" if is_detected else "absent",
+            "status": "present" if is_present else "absent",
             "confidence": confidence,
             "source": "ai",
         })
@@ -392,11 +454,17 @@ async def take_attendance_ai(
     lecture.present_count = present_count
     await db.commit()
 
+    no_face_students = len(stored_list) == 0 and face_service.initialized
     return {
-        "message": "AI face recognition complete",
-        "image_preview": image_data_url,
-        "image_size_kb": round(image_size_kb, 1),
-        "filename": file.filename,
+        "ai_used": use_ai,
+        "mode": "real_ai" if use_ai else ("mock_no_embeddings" if no_face_students else "mock_model_unavailable"),
+        "warning": (
+            "No face embeddings registered for students in this lecture — using mock results."
+            if no_face_students
+            else ("Face recognition model unavailable — using mock results." if not face_service.initialized else None)
+        ),
+        "images_processed": len(image_previews),
+        "image_previews": image_previews,
         "detected_faces": present_count,
         "total_students": len(rec_rows),
         "detection_results": detection_results,

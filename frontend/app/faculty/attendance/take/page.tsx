@@ -1,705 +1,588 @@
 "use client";
-import { Suspense, useEffect, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { apiFetch, API_URL } from "@/lib/api";
-import TopBar from "@/components/layout/TopBar";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
+import { apiFetch } from "@/lib/api";
 import {
-  Camera, Image as ImageIcon, Loader2, CheckCircle, XCircle,
-  Trash2, ChevronRight, Users, Award, Sparkles, RefreshCw,
-  AlertTriangle
+  Upload, Camera, Trash2, CheckCircle2, XCircle, Loader2,
+  ChevronRight, ChevronLeft, Users, ToggleLeft, ToggleRight,
+  AlertTriangle, Sparkles, Check, Image as ImageIcon,
 } from "lucide-react";
 
-type Mode = "ai" | "manual";
-type Step = "setup" | "camera" | "processing" | "review";
-
-interface Subject { id: string; name: string; code: string; }
+// ─── Types ──────────────────────────────────────────────────
+interface Lecture {
+  id: string; subject_name: string; subject_code: string;
+  division: string; batch: string; lecture_no: number;
+  date: string; time: string; status: string;
+  total_students: number; present_count: number;
+}
 interface DetectionResult {
-  student_id: string;
-  student_name: string;
-  roll_no: string;
-  status: "present" | "absent";
-  confidence: number;
-  source: string;
+  student_id: string; student_name: string; roll_no: string;
+  status: "present" | "absent"; confidence: number; source: string;
 }
-interface StudentRecord {
-  id: string;
-  student_id: string;
-  student_name: string;
-  roll_no: string;
-  status: "present" | "absent";
-  source: string;
-  confidence: number | null;
+interface AIResult {
+  ai_used: boolean; mode: string; warning: string | null;
+  images_processed: number; image_previews: string[];
+  detected_faces: number; total_students: number;
+  detection_results: DetectionResult[];
 }
 
-const API_BASE = API_URL;
-
-function TakeAttendanceInner() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const [mode, setMode] = useState<Mode>("ai");
-  const [subjects, setSubjects] = useState<Subject[]>([]);
-  const [selectedSubject, setSelectedSubject] = useState("");
-  const [lectureNo, setLectureNo] = useState(1);
-  const [division, setDivision] = useState("A");
-  const [batch, setBatch] = useState("All");
-  const [step, setStep] = useState<Step>("setup");
-
-  // Image / capture state
-  const [capturedImage, setCapturedImage] = useState<File | null>(null);
-  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
-
-  // Processing
-  const [processingProgress, setProcessingProgress] = useState(0);
-  const [processingStatus, setProcessingStatus] = useState("");
-
-  // Results
-  const [lectureId, setLectureId] = useState<string | null>(null);
-  const [students, setStudents] = useState<StudentRecord[]>([]);
-  const [detectionResults, setDetectionResults] = useState<DetectionResult[]>([]);
-  const [processedImageUrl, setProcessedImageUrl] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [loadingSubjects, setLoadingSubjects] = useState(true);
-  const [error, setError] = useState("");
-
-  const dateStr = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "short", year: "numeric" });
-  const timeStr = new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
-
-  useEffect(() => {
-    // Pre-select lecture if lecture_id is provided in query
-    const qLectureId = searchParams.get("lecture_id");
-    if (qLectureId) {
-      setLectureId(qLectureId);
-      // Load lecture details and jump to review
-      loadExistingLecture(qLectureId);
-      return;
-    }
-
-    async function loadSubjects() {
-      try {
-        const res = await apiFetch("/subjects/");
-        if (res.ok) {
-          const data = await res.json();
-          setSubjects(data);
-          if (data.length > 0) setSelectedSubject(data[0].id);
-        }
-      } catch (err) {
-        console.error("Error loading subjects:", err);
-      } finally {
-        setLoadingSubjects(false);
-      }
-    }
-    loadSubjects();
-  }, []);
-
-  async function loadExistingLecture(id: string) {
-    try {
-      const res = await apiFetch(`/attendance/lectures/${id}`);
-      if (res.ok) {
-        const data = await res.json();
-        setStudents(data.records);
-        setStep("review");
-      }
-    } catch {}
-    setLoadingSubjects(false);
-  }
-
-  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setCapturedImage(file);
-    setImagePreviewUrl(URL.createObjectURL(file));
-  }
-
-  function clearImage() {
-    setCapturedImage(null);
-    setImagePreviewUrl(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  }
-
-  async function animateProgress(from: number, to: number, durationMs: number, label: string) {
-    setProcessingStatus(label);
-    const steps = 20;
-    const delay = durationMs / steps;
-    const increment = (to - from) / steps;
-    for (let i = 0; i < steps; i++) {
-      await new Promise(r => setTimeout(r, delay));
-      setProcessingProgress(prev => Math.min(to, prev + increment));
-    }
-  }
-
-  async function handleSubmit() {
-    if (!selectedSubject) return;
-    setError("");
-    setStep("processing");
-    setProcessingProgress(5);
-
-    try {
-      // Step 1: Create lecture
-      await animateProgress(5, 30, 600, "Creating lecture session...");
-      const todayDate = new Date().toISOString().split("T")[0];
-      const createRes = await apiFetch("/attendance/lectures", {
-        method: "POST",
-        body: JSON.stringify({ subject_id: selectedSubject, division, batch, lecture_no: lectureNo, date: todayDate }),
-      });
-      if (!createRes.ok) {
-        const err = await createRes.json();
-        throw new Error(err.detail || "Failed to create lecture session");
-      }
-      const lecture = await createRes.json();
-      const currentLectureId = lecture.id;
-      setLectureId(currentLectureId);
-
-      if (mode === "manual") {
-        // Manual mode — load student list directly
-        await animateProgress(30, 90, 400, "Loading student roster...");
-        const detailRes = await apiFetch(`/attendance/lectures/${currentLectureId}`);
-        if (!detailRes.ok) throw new Error("Failed to load student list");
-        const detail = await detailRes.json();
-        setStudents(detail.records);
-        await animateProgress(90, 100, 200, "Ready!");
-        setStep("review");
-        return;
-      }
-
-      // Step 2: Upload photo for AI detection
-      await animateProgress(30, 50, 300, "Uploading class photo...");
-
-      const formData = new FormData();
-      formData.append("lecture_id", currentLectureId);
-      formData.append("file", capturedImage!);
-
-      const token = localStorage.getItem("access_token");
-      const aiRes = await fetch(`${API_BASE}/attendance/take-ai`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
-
-      await animateProgress(50, 75, 800, "Running face recognition...");
-
-      if (!aiRes.ok) {
-        const err = await aiRes.json();
-        throw new Error(err.detail || "AI recognition failed");
-      }
-
-      const aiData = await aiRes.json();
-      setProcessedImageUrl(aiData.image_preview || imagePreviewUrl);
-      setDetectionResults(aiData.detection_results || []);
-
-      await animateProgress(75, 95, 400, "Loading student review list...");
-
-      // Step 3: Load updated records
-      const detailRes = await apiFetch(`/attendance/lectures/${currentLectureId}`);
-      if (!detailRes.ok) throw new Error("Failed to load lecture details");
-      const detail = await detailRes.json();
-      setStudents(detail.records);
-
-      await animateProgress(95, 100, 200, "Complete!");
-      setStep("review");
-    } catch (err: any) {
-      setError(err.message || "Something went wrong. Please try again.");
-      setStep("setup");
-      setProcessingProgress(0);
-    }
-  }
-
-  async function handleFinalize() {
-    if (!lectureId) return;
-    setSaving(true);
-    try {
-      const presentIds = students.filter(s => s.status === "present").map(s => s.student_id);
-      const res = await apiFetch(`/attendance/lectures/${lectureId}/finalize`, {
-        method: "PUT",
-        body: JSON.stringify({ present_student_ids: presentIds }),
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || "Failed to finalize attendance");
-      }
-      router.push("/faculty/home");
-    } catch (err: any) {
-      setError(err.message || "Error finalizing attendance");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  function toggleStatus(studentId: string) {
-    setStudents(prev =>
-      prev.map(s =>
-        s.student_id === studentId
-          ? { ...s, status: s.status === "present" ? "absent" : "present", source: "manual" }
-          : s
-      )
-    );
-  }
-
-  // ─── Processing Screen ──────────────────────────────────
-  if (step === "processing") {
-    return (
-      <div style={{ minHeight: "100dvh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 32, textAlign: "center", background: "var(--bg)" }}>
-        {/* Animated Scanner */}
-        <div style={{ position: "relative", width: 120, height: 120, marginBottom: 32 }}>
-          <div style={{
-            position: "absolute", inset: 0, borderRadius: "50%",
-            border: "3px solid var(--accent)", opacity: 0.2,
-            animation: "ping 2s cubic-bezier(0, 0, 0.2, 1) infinite"
-          }} />
-          <div style={{
-            position: "absolute", inset: 8, borderRadius: "50%",
-            border: "3px solid var(--accent)", opacity: 0.4,
-            animation: "ping 2s cubic-bezier(0, 0, 0.2, 1) infinite 0.5s"
-          }} />
-          <div style={{
-            position: "absolute", inset: 0, borderRadius: "50%",
-            background: "var(--accent-dim)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}>
-            {mode === "ai"
-              ? <Sparkles size={40} style={{ color: "var(--accent)" }} />
-              : <Users size={40} style={{ color: "var(--accent)" }} />
-            }
-          </div>
-        </div>
-
-        <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 8 }}>
-          {mode === "ai" ? "AI Processing" : "Setting Up Session"}
-        </h2>
-        <p style={{ color: "var(--text-secondary)", fontSize: 14, marginBottom: 32, maxWidth: 260 }}>
-          {processingStatus}
-        </p>
-
-        {/* Progress bar */}
-        <div style={{ width: "100%", maxWidth: 280 }}>
-          <div style={{ background: "var(--bg-card-2)", borderRadius: 99, height: 8, overflow: "hidden", marginBottom: 8 }}>
-            <div style={{
-              height: "100%", borderRadius: 99,
-              background: "linear-gradient(90deg, var(--accent), var(--accent-light))",
-              width: `${processingProgress}%`,
-              transition: "width 0.3s ease",
-              boxShadow: "0 0 10px var(--accent-glow)"
-            }} />
-          </div>
-          <span style={{ fontSize: 13, color: "var(--accent)", fontWeight: 600 }}>{Math.round(processingProgress)}%</span>
-        </div>
-
-        {imagePreviewUrl && mode === "ai" && (
-          <div style={{ marginTop: 32, position: "relative", width: 180, height: 120, borderRadius: 12, overflow: "hidden", border: "2px solid var(--border-accent)" }}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={imagePreviewUrl} alt="Uploaded" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-            {/* Scan line animation */}
-            <div style={{
-              position: "absolute", left: 0, right: 0, height: 2,
-              background: "linear-gradient(90deg, transparent, var(--accent), transparent)",
-              animation: "scanline 1.5s linear infinite",
-              boxShadow: "0 0 8px var(--accent-glow)"
-            }} />
-          </div>
-        )}
-
-        <style>{`
-          @keyframes ping { 75%, 100% { transform: scale(2); opacity: 0; } }
-          @keyframes scanline { 0% { top: 0%; } 100% { top: 100%; } }
-        `}</style>
-      </div>
-    );
-  }
-
-  // ─── Review Screen ──────────────────────────────────────
-  if (step === "review") {
-    const presentCount = students.filter(s => s.status === "present").length;
-    const absentCount = students.length - presentCount;
-    const selectedSubjObj = subjects.find(s => s.id === selectedSubject);
-
-    return (
-      <div className="page-content fade-up" style={{ paddingBottom: 120 }}>
-        <TopBar title="Review Attendance" />
-
-        {/* Uploaded Photo Preview */}
-        {(processedImageUrl || imagePreviewUrl) && mode === "ai" && (
-          <div style={{ position: "relative", borderRadius: 16, overflow: "hidden", marginBottom: 16, height: 180, border: "1.5px solid var(--border-accent)" }}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={processedImageUrl || imagePreviewUrl || ""}
-              alt="Classroom photo"
-              style={{ width: "100%", height: "100%", objectFit: "cover" }}
-            />
-            {/* Overlay label */}
-            <div style={{
-              position: "absolute", bottom: 0, left: 0, right: 0,
-              padding: "16px 12px 12px",
-              background: "linear-gradient(transparent, rgba(0,0,0,0.8))",
-              display: "flex", justifyContent: "space-between", alignItems: "flex-end"
-            }}>
-              <div>
-                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: 0.5 }}>Class Photo Analyzed</div>
-                <div style={{ fontSize: 13, color: "white", fontWeight: 600 }}>{presentCount} faces detected</div>
-              </div>
-              <span className="badge" style={{ background: "var(--accent)", color: "white", fontSize: 11 }}>
-                ✦ AI Processed
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* Summary Card */}
-        <div style={{
-          borderRadius: 16, padding: "16px 20px", marginBottom: 16,
-          background: "linear-gradient(135deg, #16122d 0%, var(--bg-card) 100%)",
-          border: "1px solid var(--border-accent)"
-        }}>
-          <div style={{ fontSize: 11, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
-            {selectedSubjObj?.name || "Lecture"} · Div {division}
-          </div>
-          <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 16 }}>
-            {mode === "ai"
-              ? `${presentCount}/${students.length} students auto-detected. Tap a student to toggle.`
-              : `Tap each student to mark present/absent.`
-            }
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, textAlign: "center" }}>
-            <div>
-              <div style={{ fontSize: 28, fontWeight: 800, color: "var(--success)", lineHeight: 1 }}>{presentCount}</div>
-              <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 4 }}>Present</div>
-            </div>
-            <div>
-              <div style={{ fontSize: 28, fontWeight: 800, color: "var(--danger)", lineHeight: 1 }}>{absentCount}</div>
-              <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 4 }}>Absent</div>
-            </div>
-            <div>
-              <div style={{ fontSize: 28, fontWeight: 800, color: "var(--accent)", lineHeight: 1 }}>{students.length}</div>
-              <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 4 }}>Total</div>
-            </div>
-          </div>
-
-          {/* Progress bar */}
-          <div style={{ marginTop: 16, height: 4, borderRadius: 99, background: "var(--bg-card-2)", overflow: "hidden" }}>
-            <div style={{
-              height: "100%", borderRadius: 99,
-              background: "linear-gradient(90deg, var(--success), var(--accent))",
-              width: `${students.length > 0 ? (presentCount / students.length) * 100 : 0}%`,
-              transition: "width 0.4s ease"
-            }} />
-          </div>
-        </div>
-
-        {error && (
-          <div className="alert alert-danger" style={{ marginBottom: 16 }}>
-            <AlertTriangle size={16} /> {error}
-          </div>
-        )}
-
-        {/* Student List */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
-          {students.map((s) => {
-            const isPresent = s.status === "present";
-            const confidence = s.confidence ? Math.round(s.confidence * 100) : null;
-            const isManual = s.source === "manual";
-
-            return (
-              <button
-                key={s.student_id}
-                onClick={() => toggleStatus(s.student_id)}
-                style={{
-                  display: "flex", alignItems: "center", gap: 12,
-                  width: "100%", textAlign: "left",
-                  padding: "12px 14px", borderRadius: 14,
-                  border: `1.5px solid ${isPresent ? "var(--success)" : "var(--border)"}`,
-                  background: isPresent ? "rgba(52,199,89,0.06)" : "var(--bg-card)",
-                  cursor: "pointer",
-                  transition: "all 0.15s ease",
-                }}
-              >
-                {/* Avatar */}
-                <div style={{
-                  width: 40, height: 40, borderRadius: "50%", flexShrink: 0,
-                  background: isPresent ? "rgba(52,199,89,0.15)" : "var(--bg-card-2)",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  color: isPresent ? "var(--success)" : "var(--text-muted)",
-                  fontWeight: 700, fontSize: 15,
-                }}>
-                  {s.student_name.charAt(0)}
-                </div>
-
-                {/* Info */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14, color: "var(--text-primary)" }}>{s.student_name}</div>
-                  <div style={{ fontSize: 11, color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: 6 }}>
-                    <span>{s.roll_no}</span>
-                    {confidence !== null && mode === "ai" && !isManual && (
-                      <>
-                        <span style={{ opacity: 0.4 }}>·</span>
-                        <span style={{ color: confidence >= 80 ? "var(--success)" : confidence >= 50 ? "var(--warning)" : "var(--danger)" }}>
-                          {confidence}% match
-                        </span>
-                      </>
-                    )}
-                    {isManual && (
-                      <>
-                        <span style={{ opacity: 0.4 }}>·</span>
-                        <span style={{ color: "var(--text-muted)" }}>manual</span>
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                {/* Status pill */}
-                <div style={{
-                  width: 64, height: 28, borderRadius: 99, flexShrink: 0,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontWeight: 700, fontSize: 12,
-                  background: isPresent ? "var(--success)" : "var(--danger-dim)",
-                  color: isPresent ? "white" : "var(--danger)",
-                  border: isPresent ? "none" : "1px solid var(--danger)",
-                }}>
-                  {isPresent ? "Present" : "Absent"}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Action Buttons */}
-        <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, padding: "12px 16px 28px", background: "var(--bg)", borderTop: "1px solid var(--border)", display: "flex", gap: 10 }}>
-          <button
-            className="btn btn-secondary"
-            style={{ flex: "0 0 auto", padding: "0 16px", height: 48 }}
-            onClick={() => { setStep("setup"); setStudents([]); }}
-          >
-            <RefreshCw size={16} />
-          </button>
-          <button
-            className="btn btn-primary"
-            style={{ flex: 1, height: 48, fontSize: 15, fontWeight: 700, gap: 8 }}
-            onClick={handleFinalize}
-            disabled={saving}
-          >
-            {saving ? (
-              <><Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} /> Saving...</>
-            ) : (
-              <><CheckCircle size={18} /> Finalize Attendance</>
-            )}
-          </button>
-        </div>
-
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-      </div>
-    );
-  }
-
-  // ─── Setup Screen ───────────────────────────────────────
+// ─── Toast ──────────────────────────────────────────────────
+function Toast({ msg }: { msg: string }) {
+  if (!msg) return null;
+  const ok = msg.startsWith("✓");
   return (
-    <div className="page-content" style={{ paddingBottom: 120 }}>
-      <TopBar title="Take Attendance" showBack />
+    <div style={{
+      position: "fixed", top: 20, left: "50%", transform: "translateX(-50%)",
+      background: ok ? "var(--success)" : "var(--danger)",
+      color: "white", padding: "10px 22px", borderRadius: 99, fontSize: 13,
+      fontWeight: 700, zIndex: 9999, boxShadow: "0 4px 24px rgba(0,0,0,0.4)",
+      whiteSpace: "nowrap", animation: "slideDown 0.3s ease",
+    }}>{msg}</div>
+  );
+}
 
-      {/* Mode Toggle */}
-      <div style={{ padding: "12px 0 20px" }}>
-        <div className="toggle-pill">
-          <button className={mode === "ai" ? "active" : ""} onClick={() => setMode("ai")}>
-            <Sparkles size={14} /> AI Face Scan
-          </button>
-          <button className={mode === "manual" ? "active" : ""} onClick={() => setMode("manual")}>
-            <Users size={14} /> Manual
-          </button>
-        </div>
-        <p style={{ fontSize: 12, color: "var(--text-secondary)", margin: "10px 0 0" }}>
-          {mode === "ai"
-            ? "📸 Upload a classroom photo — AI will automatically detect and mark attendance."
-            : "📋 Review the student roster and mark present/absent manually."}
-        </p>
-      </div>
-
-      {/* Date Banner */}
-      <div style={{
-        background: "linear-gradient(135deg, #16122d, var(--bg-card))",
-        border: "1px solid var(--border-accent)",
-        borderRadius: 14, padding: "12px 16px", marginBottom: 20,
-        display: "flex", justifyContent: "space-between", alignItems: "center"
-      }}>
-        <div>
-          <div style={{ fontSize: 11, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5 }}>Session Date</div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>{dateStr}</div>
-        </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 11, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5 }}>Current Time</div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--accent)" }}>{timeStr}</div>
-        </div>
-      </div>
-
-      {/* Subject */}
-      <div className="form-group">
-        <label className="form-label">Subject</label>
-        {loadingSubjects ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--text-secondary)", fontSize: 14 }}>
-            <Loader2 size={16} style={{ animation: "spin 1s linear infinite", color: "var(--accent)" }} />
-            Loading subjects...
-          </div>
-        ) : subjects.length === 0 ? (
-          <div style={{ fontSize: 13, color: "var(--text-secondary)", padding: "10px 0" }}>
-            No subjects assigned. Contact your admin.
-          </div>
-        ) : (
-          <select className="select-input" value={selectedSubject} onChange={e => setSelectedSubject(e.target.value)}>
-            {subjects.map(s => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
-          </select>
-        )}
-      </div>
-
-      {/* Lecture Number */}
-      <div className="form-group">
-        <label className="form-label">Lecture Number</label>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {[1, 2, 3, 4, 5, 6, 7, 8].map(n => (
-            <button
-              key={n}
-              onClick={() => setLectureNo(n)}
-              style={{
-                width: 44, height: 44, borderRadius: 10, border: "1.5px solid",
-                borderColor: lectureNo === n ? "var(--accent)" : "var(--border)",
-                background: lectureNo === n ? "var(--accent-dim)" : "var(--bg-input)",
-                color: lectureNo === n ? "var(--accent)" : "var(--text-secondary)",
-                fontWeight: lectureNo === n ? 700 : 400, fontSize: 15,
-                cursor: "pointer", transition: "all 0.15s"
-              }}
-            >
-              {n}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Division + Batch */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }} className="form-group">
-        <div>
-          <label className="form-label">Division</label>
-          <select className="select-input" value={division} onChange={e => setDivision(e.target.value)}>
-            {["A", "B", "C", "D"].map(d => <option key={d} value={d}>{d}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="form-label">Batch</label>
-          <select className="select-input" value={batch} onChange={e => setBatch(e.target.value)}>
-            {["All", "B1", "B2", "B3"].map(b => <option key={b} value={b}>{b}</option>)}
-          </select>
-        </div>
-      </div>
-
-      {/* AI: Image Uploader */}
-      {mode === "ai" && (
-        <div className="form-group" style={{ marginBottom: 24 }}>
-          <label className="form-label">Class Photo</label>
-
-          {!imagePreviewUrl ? (
-            <div style={{
-              border: "2px dashed var(--border-accent)", borderRadius: 16,
-              padding: "32px 20px", textAlign: "center",
-              background: "var(--bg-card)", cursor: "pointer"
-            }}>
-              <div style={{ marginBottom: 16, display: "flex", justifyContent: "center", gap: 24 }}>
-                <label style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, cursor: "pointer" }}>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    onChange={handleFileSelect}
-                    style={{ display: "none" }}
-                    id="camera-input"
-                  />
-                  <div style={{
-                    width: 56, height: 56, borderRadius: 14,
-                    background: "var(--accent-dim)",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                  }}>
-                    <Camera size={24} style={{ color: "var(--accent)" }} />
-                  </div>
-                  <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>Camera</span>
-                </label>
-
-                <label style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, cursor: "pointer" }}>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleFileSelect}
-                    style={{ display: "none" }}
-                  />
-                  <div style={{
-                    width: 56, height: 56, borderRadius: 14,
-                    background: "var(--bg-card-2)",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                  }}>
-                    <ImageIcon size={24} style={{ color: "var(--text-secondary)" }} />
-                  </div>
-                  <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>Gallery</span>
-                </label>
-              </div>
-              <p style={{ fontSize: 13, color: "var(--text-muted)" }}>Capture or upload a clear photo of the classroom</p>
-            </div>
-          ) : (
-            <div style={{ position: "relative", borderRadius: 16, overflow: "hidden", border: "2px solid var(--border-accent)" }}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={imagePreviewUrl} alt="Preview" style={{ width: "100%", height: 200, objectFit: "cover", display: "block" }} />
-              <div style={{
-                position: "absolute", bottom: 0, left: 0, right: 0, padding: "12px 14px",
-                background: "linear-gradient(transparent, rgba(0,0,0,0.75))",
-                display: "flex", alignItems: "center", justifyContent: "space-between"
-              }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <CheckCircle size={14} color="var(--success)" />
-                  <span style={{ fontSize: 13, color: "white", fontWeight: 500 }}>{capturedImage?.name || "Photo ready"}</span>
-                </div>
-                <button
-                  onClick={clearImage}
-                  style={{ background: "rgba(255,0,0,0.2)", border: "none", borderRadius: 8, padding: "4px 8px", color: "var(--danger)", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}
-                >
-                  <Trash2 size={12} /> Remove
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {error && (
-        <div className="alert alert-danger" style={{ marginBottom: 16 }}>
-          <AlertTriangle size={16} /> {error}
-        </div>
-      )}
-
-      {/* Submit Button */}
-      <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, padding: "12px 16px 28px", background: "var(--bg)", borderTop: "1px solid var(--border)" }}>
-        <button
-          className="btn btn-primary"
-          style={{ width: "100%", height: 52, fontSize: 16, fontWeight: 700, gap: 10 }}
-          onClick={handleSubmit}
-          disabled={(mode === "ai" && !capturedImage) || !selectedSubject || loadingSubjects}
-        >
-          {mode === "ai" ? (
-            <><Sparkles size={18} /> Scan & Mark Attendance</>
-          ) : (
-            <><ChevronRight size={18} /> Open Student Roster</>
-          )}
-        </button>
-      </div>
-
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+// Step indicator
+function StepDot({ n, active, done }: { n: number; active: boolean; done: boolean }) {
+  return (
+    <div style={{
+      width: 32, height: 32, borderRadius: "50%", flexShrink: 0,
+      background: done ? "#22d37a" : active ? "var(--accent)" : "var(--bg-card-2)",
+      border: `2px solid ${done ? "#22d37a" : active ? "var(--accent)" : "var(--border)"}`,
+      color: done ? "#fff" : active ? "#fff" : "var(--text-muted)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      fontSize: 13, fontWeight: 800,
+    }}>
+      {done ? <Check size={14} /> : n}
     </div>
   );
 }
 
+// ─── Main ───────────────────────────────────────────────────
 export default function TakeAttendancePage() {
+  const router  = useRouter();
+  const [toast, setToast] = useState("");
+  const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(""), 3500); };
+
+  const [step, setStep]           = useState<1 | 2 | 3>(1);
+
+  // Step 1 state
+  const [lectures, setLectures]   = useState<Lecture[]>([]);
+  const [selLec, setSelLec]       = useState<Lecture | null>(null);
+  const [photos, setPhotos]       = useState<File[]>([]);
+  const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
+  const [showCam, setShowCam]     = useState(false);
+  const [camStream, setCamStream] = useState<MediaStream | null>(null);
+  const videoRef   = useRef<HTMLVideoElement>(null);
+  const canvasRef  = useRef<HTMLCanvasElement>(null);
+
+  // Step 2 state
+  const [processing, setProcessing] = useState(false);
+  const [procProgress, setProcProgress] = useState(0);
+
+  // Step 3 state
+  const [aiResult, setAiResult]   = useState<AIResult | null>(null);
+  const [overrides, setOverrides] = useState<Record<string, boolean>>({});
+  const [finalizing, setFinalizing] = useState(false);
+
+  // ── Load pending lectures ──────────────────────────────────
+  useEffect(() => {
+    apiFetch("/attendance/lectures")
+      .then(r => r.ok ? r.json() : [])
+      .then((all: Lecture[]) => setLectures(all.filter(l => l.status === "pending")))
+      .catch(() => {});
+  }, []);
+
+  // ── Photo helpers ──────────────────────────────────────────
+  const addPhotos = (files: FileList | null) => {
+    if (!files) return;
+    const remaining = 5 - photos.length;
+    const toAdd = Array.from(files).slice(0, remaining);
+    const newFiles = [...photos, ...toAdd];
+    setPhotos(newFiles);
+    Promise.all(toAdd.map(f => new Promise<string>(res => {
+      const r = new FileReader(); r.onload = e => res(e.target?.result as string); r.readAsDataURL(f);
+    }))).then(prev => setPhotoPreviews(p => [...p, ...prev]));
+  };
+
+  const removePhoto = (idx: number) => {
+    setPhotos(p => p.filter((_, i) => i !== idx));
+    setPhotoPreviews(p => p.filter((_, i) => i !== idx));
+  };
+
+  // Camera
+  const startCamera = async () => {
+    setShowCam(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      setCamStream(stream);
+      setTimeout(() => { if (videoRef.current) videoRef.current.srcObject = stream; }, 100);
+    } catch { showToast("✗ Camera permission denied"); setShowCam(false); }
+  };
+  const stopCamera = () => { camStream?.getTracks().forEach(t => t.stop()); setCamStream(null); setShowCam(false); }
+  const capturePhoto = () => {
+    if (!videoRef.current || !canvasRef.current) return;
+    const v = videoRef.current; const c = canvasRef.current;
+    c.width = v.videoWidth; c.height = v.videoHeight;
+    c.getContext("2d")!.drawImage(v, 0, 0);
+    c.toBlob(blob => {
+      if (!blob) return;
+      const file = new File([blob], `classroom_${Date.now()}.jpg`, { type: "image/jpeg" });
+      stopCamera();
+      addPhotos(([file] as unknown) as FileList);
+    }, "image/jpeg", 0.85);
+  };
+
+  // ── Step 1 → 2: Run AI ────────────────────────────────────
+  const runRecognition = async () => {
+    if (!selLec || photos.length === 0) return;
+    setStep(2);
+    setProcessing(true);
+    setProcProgress(0);
+
+    // Fake progress animation
+    const tick = setInterval(() => setProcProgress(p => Math.min(p + 8, 88)), 300);
+
+    try {
+      const form = new FormData();
+      form.append("lecture_id", selLec.id);
+      photos.forEach(f => form.append("files", f));
+
+      const r = await apiFetch("/attendance/take-ai", { method: "POST", body: form });
+      clearInterval(tick);
+      setProcProgress(100);
+
+      if (!r.ok) {
+        const e = await r.json();
+        showToast("✗ " + (e.detail || "Recognition failed"));
+        setStep(1); setProcessing(false); return;
+      }
+
+      const result: AIResult = await r.json();
+      setAiResult(result);
+
+      // Init overrides from AI result
+      const init: Record<string, boolean> = {};
+      result.detection_results.forEach(d => { init[d.student_id] = d.status === "present"; });
+      setOverrides(init);
+
+      setTimeout(() => { setProcessing(false); setStep(3); }, 500);
+    } catch (e: any) {
+      clearInterval(tick);
+      showToast("✗ " + e.message);
+      setStep(1); setProcessing(false);
+    }
+  };
+
+  // ── Step 3: Finalize ─────────────────────────────────────
+  const finalize = async () => {
+    if (!selLec || !aiResult) return;
+    setFinalizing(true);
+    try {
+      const presentIds = aiResult.detection_results
+        .filter(d => overrides[d.student_id] !== false && (overrides[d.student_id] === true || d.status === "present"))
+        .map(d => d.student_id)
+        // actually use override map
+      const presentIdsReal = Object.entries(overrides)
+        .filter(([, v]) => v).map(([k]) => k);
+
+      const r = await apiFetch(`/attendance/lectures/${selLec.id}/finalize`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ present_student_ids: presentIdsReal }),
+      });
+      if (r.ok) {
+        showToast("✓ Attendance finalized!");
+        setTimeout(() => router.push("/faculty/attendance"), 1500);
+      } else {
+        const e = await r.json();
+        showToast("✗ " + (e.detail || "Finalize failed"));
+      }
+    } catch { showToast("✗ Network error"); }
+    finally { setFinalizing(false); }
+  };
+
+  const presentCount  = Object.values(overrides).filter(Boolean).length;
+  const totalStudents = aiResult?.total_students ?? 0;
+
   return (
-    <Suspense fallback={
-      <div style={{ minHeight: "100dvh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div style={{ width: 48, height: 48, borderRadius: 14, background: "var(--accent-dim)", border: "1px solid var(--border-accent)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <span style={{ color: "var(--accent)", fontSize: 22, animation: "spin 1s linear infinite", display: "block" }}>⟳</span>
+    <div style={{ maxWidth: 640, margin: "0 auto", padding: "20px 16px 120px" }}>
+      <Toast msg={toast} />
+      <canvas ref={canvasRef} style={{ display: "none" }} />
+
+      {/* Header + Steps */}
+      <div style={{ marginBottom: 24 }}>
+        <button
+          onClick={() => { if (step === 1) router.back(); else setStep(s => (s - 1) as any); }}
+          style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", marginBottom: 12, padding: 0 }}
+        >
+          <ChevronLeft size={22} />
+        </button>
+        <h1 style={{ fontSize: 22, fontWeight: 900, letterSpacing: -0.5, marginBottom: 16 }}>
+          Take Attendance
+        </h1>
+        {/* Step progress */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {([
+            [1, "Select Lecture & Photos"],
+            [2, "AI Processing"],
+            [3, "Review & Finalize"],
+          ] as [number, string][]).map(([n, label], i) => (
+            <>
+              <StepDot key={n} n={n} active={step === n} done={step > n} />
+              {i < 2 && (
+                <div key={`line-${n}`} style={{
+                  flex: 1, height: 2,
+                  background: step > n ? "#22d37a" : "var(--border)",
+                  borderRadius: 2,
+                }} />
+              )}
+            </>
+          ))}
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
+          {["Lecture + Photos", "Processing", "Review"].map((l, i) => (
+            <span key={i} style={{ fontSize: 10, color: step === i + 1 ? "var(--accent-2)" : "var(--text-muted)", fontWeight: step === i + 1 ? 700 : 400 }}>
+              {l}
+            </span>
+          ))}
         </div>
       </div>
-    }>
-      <TakeAttendanceInner />
-    </Suspense>
+
+      {/* ══ STEP 1 ══════════════════════════════════════════════ */}
+      {step === 1 && (
+        <>
+          {/* Lecture selector */}
+          <div className="card" style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.8 }}>
+              Select Lecture
+            </div>
+            {lectures.length === 0
+              ? (
+                <div style={{ textAlign: "center", padding: "20px 0" }}>
+                  <div style={{ color: "var(--text-muted)", fontSize: 13, marginBottom: 8 }}>No pending lectures</div>
+                  <button
+                    onClick={() => router.push("/faculty/attendance")}
+                    style={{ fontSize: 13, fontWeight: 700, color: "var(--accent-2)", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }}
+                  >
+                    Create a lecture first →
+                  </button>
+                </div>
+              )
+              : lectures.map(l => (
+                <div
+                  key={l.id}
+                  onClick={() => setSelLec(selLec?.id === l.id ? null : l)}
+                  style={{
+                    display: "flex", gap: 12, alignItems: "center",
+                    padding: "12px 14px", borderRadius: 12,
+                    border: `1.5px solid ${selLec?.id === l.id ? "var(--accent)" : "var(--border)"}`,
+                    background: selLec?.id === l.id ? "var(--accent-dim)" : "var(--bg-card-2)",
+                    marginBottom: 8, cursor: "pointer",
+                  }}
+                >
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14 }}>{l.subject_name}</div>
+                    <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 2 }}>
+                      {l.subject_code} · Lec #{l.lecture_no} · Div {l.division} · {l.date}
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 1 }}>
+                      {l.total_students} students enrolled
+                    </div>
+                  </div>
+                  {selLec?.id === l.id && <CheckCircle2 size={16} style={{ color: "var(--accent-2)", flexShrink: 0 }} />}
+                </div>
+              ))}
+          </div>
+
+          {/* Photo upload */}
+          <div className="card" style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.8 }}>
+              Classroom Photos ({photos.length}/5)
+            </div>
+
+            {/* Photo grid */}
+            {photoPreviews.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 12 }}>
+                {photoPreviews.map((src, i) => (
+                  <div key={i} style={{ position: "relative", borderRadius: 10, overflow: "hidden", aspectRatio: "4/3" }}>
+                    <img src={src} alt={`Photo ${i+1}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    <button
+                      onClick={() => removePhoto(i)}
+                      style={{
+                        position: "absolute", top: 4, right: 4,
+                        width: 22, height: 22, borderRadius: "50%",
+                        background: "rgba(240,90,90,0.9)", border: "none",
+                        color: "#fff", cursor: "pointer", display: "flex",
+                        alignItems: "center", justifyContent: "center",
+                      }}
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                    <div style={{
+                      position: "absolute", bottom: 4, left: 4,
+                      background: "rgba(0,0,0,0.6)", borderRadius: 4,
+                      fontSize: 9, fontWeight: 700, color: "#fff", padding: "2px 5px",
+                    }}>#{i+1}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Add buttons */}
+            {photos.length < 5 && (
+              <div style={{ display: "flex", gap: 8 }}>
+                <label style={{ flex: 1, cursor: "pointer" }}>
+                  <input
+                    type="file" accept="image/*" multiple style={{ display: "none" }}
+                    onChange={e => addPhotos(e.target.files)}
+                  />
+                  <div style={{
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                    padding: "12px", borderRadius: 12, border: "2px dashed var(--border)",
+                    background: "var(--bg-card-2)", color: "var(--text-secondary)",
+                    fontSize: 13, fontWeight: 700, cursor: "pointer",
+                  }}>
+                    <Upload size={15} /> Upload Photos
+                  </div>
+                </label>
+                <button
+                  onClick={startCamera}
+                  style={{
+                    flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                    padding: "12px", borderRadius: 12, border: "2px dashed rgba(34,211,122,0.3)",
+                    background: "rgba(34,211,122,0.05)", color: "#22d37a",
+                    fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                  }}
+                >
+                  <Camera size={15} /> Camera
+                </button>
+              </div>
+            )}
+
+            <div style={{ marginTop: 10, fontSize: 11, color: "var(--text-muted)", textAlign: "center" }}>
+              Upload up to 5 photos from different angles for best accuracy
+            </div>
+          </div>
+
+          {/* Start button */}
+          <button
+            onClick={runRecognition}
+            disabled={!selLec || photos.length === 0}
+            style={{
+              width: "100%", padding: "16px", borderRadius: 16,
+              background: !selLec || photos.length === 0 ? "var(--bg-card-2)" : "var(--accent)",
+              color: !selLec || photos.length === 0 ? "var(--text-muted)" : "#fff",
+              fontWeight: 800, fontSize: 16, border: "none", cursor: !selLec || photos.length === 0 ? "not-allowed" : "pointer",
+              fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+            }}
+          >
+            <Sparkles size={18} /> Start AI Recognition
+          </button>
+        </>
+      )}
+
+      {/* ══ STEP 2 ══════════════════════════════════════════════ */}
+      {step === 2 && (
+        <div style={{ textAlign: "center", padding: "48px 16px" }}>
+          <div style={{
+            width: 80, height: 80, borderRadius: "50%",
+            background: "var(--accent-dim)", margin: "0 auto 24px",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <Sparkles size={36} style={{ color: "var(--accent-2)", animation: "pulse 1.5s ease infinite" }} />
+          </div>
+          <div style={{ fontSize: 20, fontWeight: 900, marginBottom: 8 }}>Analysing Faces…</div>
+          <div style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 28 }}>
+            Processing {photos.length} classroom {photos.length === 1 ? "photo" : "photos"} for {selLec?.total_students} students
+          </div>
+
+          {/* Progress bar */}
+          <div style={{ height: 8, background: "var(--bg-card-2)", borderRadius: 99, overflow: "hidden", maxWidth: 320, margin: "0 auto" }}>
+            <div style={{
+              height: "100%", borderRadius: 99,
+              background: "linear-gradient(90deg, var(--accent), #22d37a)",
+              width: `${procProgress}%`, transition: "width 0.3s ease",
+            }} />
+          </div>
+          <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>{procProgress}%</div>
+
+          <style>{`@keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.6;transform:scale(0.9)} }`}</style>
+        </div>
+      )}
+
+      {/* ══ STEP 3 ══════════════════════════════════════════════ */}
+      {step === 3 && aiResult && (
+        <>
+          {/* AI info banner */}
+          {aiResult.warning && (
+            <div style={{
+              display: "flex", gap: 10, alignItems: "flex-start",
+              padding: "12px 14px", borderRadius: 12, marginBottom: 14,
+              background: "rgba(245,200,66,0.08)", border: "1px solid rgba(245,200,66,0.2)",
+            }}>
+              <AlertTriangle size={16} style={{ color: "#f5c842", flexShrink: 0, marginTop: 1 }} />
+              <div style={{ fontSize: 12, color: "#f5c842" }}>{aiResult.warning}</div>
+            </div>
+          )}
+
+          {/* Summary cards */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 14 }}>
+            <div className="card" style={{ textAlign: "center", padding: "14px 10px" }}>
+              <div style={{ fontSize: 26, fontWeight: 900, color: "#22d37a" }}>{presentCount}</div>
+              <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>Present</div>
+            </div>
+            <div className="card" style={{ textAlign: "center", padding: "14px 10px" }}>
+              <div style={{ fontSize: 26, fontWeight: 900, color: "var(--danger)" }}>{totalStudents - presentCount}</div>
+              <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>Absent</div>
+            </div>
+            <div className="card" style={{ textAlign: "center", padding: "14px 10px" }}>
+              <div style={{ fontSize: 26, fontWeight: 900, color: "var(--text-secondary)" }}>{totalStudents}</div>
+              <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>Total</div>
+            </div>
+          </div>
+
+          {/* Classroom photo previews */}
+          {aiResult.image_previews.length > 0 && (
+            <div className="card" style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.8 }}>
+                Processed Photos
+              </div>
+              <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4 }}>
+                {aiResult.image_previews.map((src, i) => (
+                  <img
+                    key={i} src={src} alt={`Image ${i+1}`}
+                    style={{ height: 80, width: 106, objectFit: "cover", borderRadius: 8, flexShrink: 0, border: "1px solid var(--border)" }}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Student list */}
+          <div className="card" style={{ marginBottom: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.8 }}>
+                Attendance Review
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+                Tap to toggle ↕
+              </div>
+            </div>
+
+            {aiResult.detection_results.map(d => {
+              const isPresent = overrides[d.student_id] ?? (d.status === "present");
+              const wasChanged = (overrides[d.student_id] !== undefined) && (overrides[d.student_id] !== (d.status === "present"));
+              const conf = Math.round((d.confidence ?? 0) * 100);
+
+              return (
+                <div
+                  key={d.student_id}
+                  onClick={() => setOverrides(o => ({ ...o, [d.student_id]: !isPresent }))}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 12,
+                    padding: "10px 0", borderBottom: "1px solid var(--border)",
+                    cursor: "pointer",
+                  }}
+                >
+                  {/* Avatar */}
+                  <div style={{
+                    width: 38, height: 38, borderRadius: "50%", flexShrink: 0,
+                    background: isPresent ? "rgba(34,211,122,0.12)" : "rgba(240,90,90,0.10)",
+                    color: isPresent ? "#22d37a" : "var(--danger)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontWeight: 800, fontSize: 15,
+                  }}>
+                    {d.student_name[0].toUpperCase()}
+                  </div>
+
+                  {/* Info */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                      {d.student_name}
+                      {wasChanged && (
+                        <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 99, background: "rgba(245,200,66,0.15)", color: "#f5c842", fontWeight: 700 }}>
+                          EDITED
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 1 }}>
+                      {d.roll_no} · AI: {conf}% {isPresent ? "✓" : "✗"}
+                    </div>
+                  </div>
+
+                  {/* Toggle */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                    <span style={{
+                      fontSize: 11, fontWeight: 700,
+                      color: isPresent ? "#22d37a" : "var(--danger)",
+                    }}>
+                      {isPresent ? "Present" : "Absent"}
+                    </span>
+                    {isPresent
+                      ? <ToggleRight size={22} style={{ color: "#22d37a" }} />
+                      : <ToggleLeft  size={22} style={{ color: "var(--text-muted)" }} />}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Finalize button */}
+          <button
+            onClick={finalize}
+            disabled={finalizing}
+            style={{
+              width: "100%", padding: "16px", borderRadius: 16,
+              background: finalizing ? "var(--bg-card-2)" : "#22d37a",
+              color: finalizing ? "var(--text-muted)" : "#fff",
+              fontWeight: 800, fontSize: 16, border: "none",
+              cursor: finalizing ? "not-allowed" : "pointer",
+              fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+            }}
+          >
+            {finalizing
+              ? <><Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> Finalizing…</>
+              : <><Check size={18} /> Finalize Attendance ({presentCount} present)</>}
+          </button>
+
+          <div style={{ textAlign: "center", marginTop: 10, fontSize: 11, color: "var(--text-muted)" }}>
+            Toggle any student before finalizing. Changes are saved permanently.
+          </div>
+        </>
+      )}
+
+      {/* Camera Modal */}
+      {showCam && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.92)", zIndex: 900,
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, padding: 16,
+        }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>Classroom Photo — point at students</div>
+          <video
+            ref={videoRef} autoPlay playsInline muted
+            style={{ width: "100%", maxWidth: 400, borderRadius: 18, border: "3px solid var(--accent)", background: "#000" }}
+          />
+          <div style={{ display: "flex", gap: 12 }}>
+            <button
+              onClick={capturePhoto}
+              style={{ padding: "14px 32px", borderRadius: 99, background: "var(--accent)", color: "#fff", fontWeight: 800, fontSize: 16, border: "none", cursor: "pointer", fontFamily: "inherit" }}
+            >
+              📸 Capture
+            </button>
+            <button
+              onClick={stopCamera}
+              style={{ padding: "14px 24px", borderRadius: 99, background: "rgba(255,255,255,0.08)", color: "#fff", fontWeight: 700, fontSize: 14, border: "1px solid rgba(255,255,255,0.18)", cursor: "pointer", fontFamily: "inherit" }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes slideDown { from { opacity:0; transform:translateX(-50%) translateY(-10px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
+      `}</style>
+    </div>
   );
 }
