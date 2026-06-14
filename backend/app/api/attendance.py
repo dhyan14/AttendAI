@@ -136,10 +136,34 @@ async def create_lecture(
     """Create a new lecture session and initialize absent records for all students in that div/batch."""
     fac_res = await db.execute(select(Faculty).where(Faculty.user_id == current_user.id))
     fac = fac_res.scalar_one_or_none()
-    if not fac:
-        raise HTTPException(status_code=404, detail="Faculty profile not found")
 
-    subj_res = await db.execute(select(Subject).where(Subject.id == req.subject_id))
+    # Auto-create a Faculty profile if the user has faculty/dept_admin role but no record yet
+    if not fac:
+        from app.models import Department as DeptModel
+        # Try to find the dept via org — pick first dept in their org
+        dept_result = None
+        if current_user.org_id:
+            dept_q = await db.execute(
+                select(DeptModel).where(DeptModel.org_id == current_user.org_id).limit(1)
+            )
+            dept_result = dept_q.scalar_one_or_none()
+
+        fac = Faculty(
+            user_id=current_user.id,
+            name=current_user.email.split("@")[0].replace(".", " ").title(),
+            designation="Faculty",
+            dept_id=dept_result.id if dept_result else None,
+        )
+        db.add(fac)
+        await db.flush()
+
+    # Validate subject_id
+    try:
+        subj_uuid = uuid.UUID(req.subject_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail="Invalid subject_id")
+
+    subj_res = await db.execute(select(Subject).where(Subject.id == subj_uuid))
     subject = subj_res.scalar_one_or_none()
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
@@ -321,7 +345,11 @@ async def take_attendance_ai(
     import random
 
     # ── Validate lecture ──────────────────────────────────────────────────
-    lec_uuid = uuid.UUID(lecture_id)
+    try:
+        lec_uuid = uuid.UUID(lecture_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail="Invalid lecture_id format")
+
     lec_res = await db.execute(select(Lecture).where(Lecture.id == lec_uuid))
     lecture = lec_res.scalar_one_or_none()
     if not lecture:

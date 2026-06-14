@@ -1,5 +1,6 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 
 from app.config import settings
@@ -26,22 +27,34 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-
+# ── CORS must be added BEFORE the exception handler ─────────────────────────
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
-app.include_router(auth.router,        prefix="/auth",        tags=["Auth"])
-app.include_router(users.router,       prefix="/users",       tags=["Users"])
-app.include_router(students.router,    prefix="/students",    tags=["Students"])
-app.include_router(departments.router, prefix="/departments", tags=["Departments"])
-app.include_router(faculty.router,     prefix="/faculty",     tags=["Faculty"])
-app.include_router(subjects.router,    prefix="/subjects",    tags=["Subjects"])
-app.include_router(attendance.router,  prefix="/attendance",  tags=["Attendance"])
+# ── Global exception handler — ensures CORS headers are sent on 500 errors ──
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    import traceback
+    tb = traceback.format_exc()
+    print(f"[UNHANDLED ERROR] {request.method} {request.url}\n{tb}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc) or "Internal server error"},
+    )
+
+app.include_router(auth.router,         prefix="/auth",        tags=["Auth"])
+app.include_router(users.router,        prefix="/users",       tags=["Users"])
+app.include_router(students.router,     prefix="/students",    tags=["Students"])
+app.include_router(departments.router,  prefix="/departments", tags=["Departments"])
+app.include_router(faculty.router,      prefix="/faculty",     tags=["Faculty"])
+app.include_router(subjects.router,     prefix="/subjects",    tags=["Subjects"])
+app.include_router(attendance.router,   prefix="/attendance",  tags=["Attendance"])
 app.include_router(recognition.router,  prefix="/face",        tags=["Face Recognition"])
 app.include_router(disputes.router,     prefix="/disputes",    tags=["Disputes"])
 app.include_router(reports.router,      prefix="/reports",     tags=["Reports"])
