@@ -16,24 +16,49 @@ interface StudentProfile {
   dept_id: string;
 }
 
+interface AttendanceStats {
+  total_lectures: number;
+  present: number;
+  absent: number;
+  percentage: number;
+}
+
 export default function StudentProfilePage() {
   const router = useRouter();
   const [profile, setProfile] = useState<StudentProfile | null>(null);
   const [email, setEmail] = useState("");
+  const [deptName, setDeptName] = useState("");
+  const [attStats, setAttStats] = useState<AttendanceStats | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadProfile() {
       try {
-        const meRes = await apiFetch("/users/me");
+        const [meRes, profileRes] = await Promise.all([
+          apiFetch("/users/me"),
+          apiFetch("/students/me"),
+        ]);
         if (meRes.ok) {
           const meData = await meRes.json();
           setEmail(meData.email);
         }
-
-        const profileRes = await apiFetch("/students/me");
         if (profileRes.ok) {
-          setProfile(await profileRes.json());
+          const studentData = await profileRes.json();
+          setProfile(studentData);
+
+          // Fetch dept name
+          const deptsRes = await apiFetch("/departments");
+          if (deptsRes.ok) {
+            const depts = await deptsRes.json();
+            const dept = depts.find((d: any) => d.id === studentData.dept_id);
+            if (dept) setDeptName(dept.name);
+          }
+
+          // Fetch attendance stats
+          const attRes = await apiFetch(`/students/${studentData.id}/attendance`);
+          if (attRes.ok) {
+            setAttStats(await attRes.json());
+          }
         }
       } catch (err) {
         console.error("Error loading profile:", err);
@@ -99,6 +124,7 @@ export default function StudentProfilePage() {
           { icon: <BookOpen size={16} />, label: "Enrollment", value: profile?.enrollment_no || "Not Registered" },
           { icon: <Layers size={16} />, label: "Division / Batch", value: `Div ${profile?.division || "?"} · ${profile?.batch || "?"}` },
           { icon: <BookOpen size={16} />, label: "Semester", value: `Semester ${profile?.semester || "?"}` },
+          { icon: <Layers size={16} />, label: "Department", value: deptName || profile?.dept_id || "—" },
         ].map((row, i) => (
           <div key={i} className="info-row">
             <div className="info-row-icon">{row.icon}</div>
@@ -109,6 +135,32 @@ export default function StudentProfilePage() {
           </div>
         ))}
       </div>
+
+      {/* Attendance Summary */}
+      {attStats && (
+        <div className="card" style={{ marginBottom: 16, background: "linear-gradient(135deg, #16122d 0%, var(--bg-card) 100%)", border: "1px solid var(--border-accent)" }}>
+          <div className="section-title" style={{ marginBottom: 12 }}>Attendance Summary</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+            {[
+              { label: "Present", value: attStats.present, color: "var(--success)" },
+              { label: "Absent", value: attStats.absent, color: "var(--danger)" },
+              { label: "Total", value: attStats.total_lectures, color: "var(--accent)" },
+            ].map((s, i) => (
+              <div key={i} style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 22, fontWeight: 800, color: s.color }}>{s.value}</div>
+                <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ height: 6, borderRadius: 99, background: "var(--bg-card-2)", overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${attStats.percentage}%`, background: attStats.percentage >= 75 ? "var(--success)" : "var(--warning)", borderRadius: 99, transition: "width 0.5s ease" }} />
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
+            <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>Overall Attendance</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: attStats.percentage >= 75 ? "var(--success)" : "var(--warning)" }}>{attStats.percentage}%</span>
+          </div>
+        </div>
+      )}
 
       {/* Logout */}
       <button

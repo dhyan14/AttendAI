@@ -31,14 +31,25 @@ interface ReportRow {
   status: "safe" | "critical" | "warning";
 }
 
+interface OrgSummaryDept {
+  dept_name: string;
+  dept_code: string;
+  student_count: number;
+  avg_attendance: number;
+  present_count: number;
+  absent_count: number;
+}
+
 export default function AdminReportsPage() {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [deptsLoading, setDeptsLoading] = useState(true);
+  const [orgSummary, setOrgSummary] = useState<OrgSummaryDept[]>([]);
+  const [summaryLoading, setSummaryLoading] = useState(true);
   
   // Filter Inputs
   const [selectedDept, setSelectedDept] = useState("");
   const [selectedSem, setSelectedSem] = useState("4");
-  const [reportType, setReportType] = useState("summary"); // 'summary' | 'defaulters' | 'detailed'
+  const [reportType, setReportType] = useState("summary"); // 'summary' | 'defaulters'
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
     d.setMonth(d.getMonth() - 1);
@@ -53,23 +64,29 @@ export default function AdminReportsPage() {
   const [toastMsg, setToastMsg] = useState("");
 
   useEffect(() => {
-    async function loadDepts() {
+    async function loadInitialData() {
       try {
-        const res = await apiFetch("/departments");
-        if (res.ok) {
-          const data = await res.json();
+        const [deptRes, summaryRes] = await Promise.all([
+          apiFetch("/departments"),
+          apiFetch("/reports/summary"),
+        ]);
+        if (deptRes.ok) {
+          const data = await deptRes.json();
           setDepartments(data);
-          if (data.length > 0) {
-            setSelectedDept(data[0].id);
-          }
+          if (data.length > 0) setSelectedDept(data[0].id);
+        }
+        if (summaryRes.ok) {
+          const s = await summaryRes.json();
+          setOrgSummary(s.departments || []);
         }
       } catch (err) {
-        console.error("Failed to load departments:", err);
+        console.error("Failed to load report data:", err);
       } finally {
         setDeptsLoading(false);
+        setSummaryLoading(false);
       }
     }
-    loadDepts();
+    loadInitialData();
   }, []);
 
   // Show a temp toast message
@@ -78,7 +95,7 @@ export default function AdminReportsPage() {
     setTimeout(() => setToastMsg(""), 3000);
   }
 
-  // Generate Report function
+  // Generate Report — fetches real attendance data per student
   async function handleGenerateReport(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedDept) return;
@@ -86,62 +103,50 @@ export default function AdminReportsPage() {
     setReportData(null);
 
     try {
-      // 1. Fetch real students for the selected department
-      const res = await apiFetch(`/students?dept_id=${selectedDept}`);
+      // 1. Fetch students for the department
+      let query = `/students?dept_id=${selectedDept}`;
+      if (selectedSem) query += `&semester=${selectedSem}`;
+      const res = await apiFetch(query);
       if (!res.ok) throw new Error("Failed to fetch student list");
       const studentsList: Student[] = await res.json();
 
-      // 2. Filter students by semester if chosen
-      const filteredStudents = studentsList.filter(s => 
-        !selectedSem || s.semester?.toString() === selectedSem
+      // 2. For each student, fetch their real attendance stats
+      const rows: ReportRow[] = await Promise.all(
+        studentsList.map(async (s) => {
+          try {
+            const attRes = await apiFetch(`/students/${s.id}/attendance`);
+            if (attRes.ok) {
+              const att = await attRes.json();
+              const pct = att.percentage ?? 0;
+              let status: "safe" | "critical" | "warning" = "safe";
+              if (pct < 65) status = "critical";
+              else if (pct < 75) status = "warning";
+              return {
+                rollNo: s.roll_no,
+                name: s.name,
+                division: s.division || "?",
+                totalLectures: att.total_lectures,
+                attended: att.present,
+                percentage: pct,
+                status,
+              };
+            }
+          } catch {}
+          return {
+            rollNo: s.roll_no,
+            name: s.name,
+            division: s.division || "?",
+            totalLectures: 0,
+            attended: 0,
+            percentage: 0,
+            status: "critical" as const,
+          };
+        })
       );
 
-      // 3. Construct attendance rows (with consistent pseudo-random percentages for realism)
-      const rows: ReportRow[] = filteredStudents.map((s, idx) => {
-        // Generate pseudo-random attendance statistics based on student ID hash code
-        const hash = s.id.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0);
-        
-        // Total lectures in the date range (e.g. between 32 and 45)
-        const totalLectures = 30 + (hash % 15);
-        
-        // Attendance percent between 55% and 96%
-        let percentage = 55 + (hash % 42);
-
-        // Adjust statistics depending on type if requested
-        if (reportType === "defaulters") {
-          // Force some below 75% for default list
-          percentage = Math.min(percentage, 74);
-        }
-
-        const attended = Math.round((totalLectures * percentage) / 100);
-        const finalPercent = Math.round((attended / totalLectures) * 100);
-
-        let status: "safe" | "critical" | "warning" = "safe";
-        if (finalPercent < 65) status = "critical";
-        else if (finalPercent < 75) status = "warning";
-
-        return {
-          rollNo: s.roll_no,
-          name: s.name,
-          division: s.division || "A",
-          totalLectures,
-          attended,
-          percentage: finalPercent,
-          status,
-        };
-      });
-
-      // Sort by roll no
       rows.sort((a, b) => a.rollNo.localeCompare(b.rollNo));
+      const finalRows = reportType === "defaulters" ? rows.filter(r => r.percentage < 75) : rows;
 
-      // Filter by type check
-      let finalRows = rows;
-      if (reportType === "defaulters") {
-        finalRows = rows.filter(r => r.percentage < 75);
-      }
-
-      // Simulate a small network latency for premium feel
-      await new Promise(resolve => setTimeout(resolve, 800));
       setReportData(finalRows);
       showToast("Report generated successfully!");
     } catch (err: any) {
@@ -223,6 +228,33 @@ ${reportData.map(r => `${r.rollNo.padEnd(8)} ${r.name.padEnd(20)} ${r.percentage
   return (
     <div className="page-content fade-up" style={{ paddingBottom: 120 }}>
       <TopBar title="Reports & Analytics" showBack={true} />
+
+      {/* Live Org Summary */}
+      {!summaryLoading && orgSummary.length > 0 && (
+        <>
+          <div className="section-header" style={{ marginBottom: 12 }}>
+            <span className="section-title">Live Org Overview</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
+            {orgSummary.map((d, i) => (
+              <div key={i} className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>{d.dept_name}</div>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                    {d.student_count} students · {d.present_count} present / {d.present_count + d.absent_count} records
+                  </div>
+                </div>
+                <span style={{
+                  fontSize: 15, fontWeight: 700,
+                  color: d.avg_attendance >= 75 ? "var(--success)" : "var(--warning)"
+                }}>
+                  {d.avg_attendance}%
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       {/* Filter Parameters Form */}
       <div className="card" style={{ marginBottom: 20 }}>

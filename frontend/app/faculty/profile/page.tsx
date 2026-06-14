@@ -17,14 +17,22 @@ interface FacultyProfile {
 export default function FacultyProfilePage() {
   const router = useRouter();
   const [profile, setProfile] = useState<FacultyProfile | null>(null);
+  const [lectureCount, setLectureCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadProfile() {
       try {
-        const res = await apiFetch("/faculty/me");
-        if (res.ok) {
-          setProfile(await res.json());
+        const [facRes, lecturesRes] = await Promise.all([
+          apiFetch("/faculty/me"),
+          apiFetch("/attendance/lectures"),
+        ]);
+        if (facRes.ok) {
+          setProfile(await facRes.json());
+        }
+        if (lecturesRes.ok) {
+          const lectures = await lecturesRes.json();
+          setLectureCount(lectures.length);
         }
       } catch (err) {
         console.error("Error loading faculty profile:", err);
@@ -98,13 +106,6 @@ export default function FacultyProfilePage() {
           <div className="info-row">
             <div className="info-row-icon"><Building2 size={16} /></div>
             <div className="info-row-content">
-              <div className="info-row-label">Organisation</div>
-              <div className="info-row-value">Sardar Vallabhbhai Global University</div>
-            </div>
-          </div>
-          <div className="info-row">
-            <div className="info-row-icon"><BookOpen size={16} /></div>
-            <div className="info-row-content">
               <div className="info-row-label">Department</div>
               <div className="info-row-value">{profile?.dept_name || "Unknown"}</div>
             </div>
@@ -118,6 +119,13 @@ export default function FacultyProfilePage() {
               </div>
             </div>
           )}
+          <div className="info-row">
+            <div className="info-row-icon"><BookOpen size={16} /></div>
+            <div className="info-row-content">
+              <div className="info-row-label">Total Lectures</div>
+              <div className="info-row-value">{lectureCount}</div>
+            </div>
+          </div>
         </div>
       </div>
 

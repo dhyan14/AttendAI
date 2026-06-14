@@ -21,16 +21,17 @@ interface Lecture {
 
 export default function FacultyHomePage() {
   const router = useRouter();
-  const [facultyUser, setFacultyUser] = useState<{ email: string } | null>(null);
+  const [facultyProfile, setFacultyProfile] = useState<{ name: string; email: string; dept_name: string } | null>(null);
   const [lectures, setLectures] = useState<Lecture[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadData() {
       try {
-        const userRes = await apiFetch("/users/me");
-        if (userRes.ok) {
-          setFacultyUser(await userRes.json());
+        // Fetch faculty profile (name, dept) from /faculty/me
+        const facRes = await apiFetch("/faculty/me");
+        if (facRes.ok) {
+          setFacultyProfile(await facRes.json());
         }
 
         const lecturesRes = await apiFetch("/attendance/lectures");
@@ -53,20 +54,20 @@ export default function FacultyHomePage() {
 
   // Calculate stats
   const todayStr = new Date().toISOString().split("T")[0];
-  const todayLectures = lectures.filter(l => l.date === todayStr || true); // Default to all for demo
+  const todayLectures = lectures.filter(l => l.date === todayStr);
   const pendingReview = lectures.filter(l => l.status === "pending").length;
   const totalLecturesCount = lectures.length;
   
   // Calculate average attendance % for finalized lectures
   const finalized = lectures.filter(l => l.status === "finalized");
   const avgAttendance = finalized.length > 0
-    ? Math.round((finalized.reduce((acc, l) => acc + (l.present_count / l.total_students), 0) / finalized.length) * 100)
-    : 85; // Default mockup for seeding
+    ? Math.round((finalized.reduce((acc, l) => acc + (l.present_count / Math.max(l.total_students, 1)), 0) / finalized.length) * 100)
+    : 0;
 
   const stats = [
     { label: "Total Lectures",   value: totalLecturesCount.toString(), icon: <BookOpen size={20} />, color: "var(--accent)" },
     { label: "Avg Attendance", value: `${avgAttendance}%`,            icon: <Users size={20} />,    color: "var(--success)" },
-    { label: "Lectures Today",   value: todayLectures.length.toString(),icon: <TrendingUp size={20} />, color: "var(--warning)" },
+    { label: "Today's Lectures",   value: todayLectures.length.toString(),icon: <TrendingUp size={20} />, color: "var(--warning)" },
     { label: "Pending Review",   value: pendingReview.toString(),       icon: <Clock size={20} />,    color: "var(--danger)" },
   ];
 
@@ -100,7 +101,10 @@ export default function FacultyHomePage() {
       {/* Greeting */}
       <div style={{ padding: "8px 0 20px" }}>
         <p style={{ color: "var(--text-secondary)", fontSize: 13, marginBottom: 4 }}>{today}</p>
-        <h2 style={{ fontSize: 22, fontWeight: 700 }}>Good {getTimeOfDay()}, {facultyUser?.email.split("@")[0] || "Faculty"} 👋</h2>
+        <h2 style={{ fontSize: 22, fontWeight: 700 }}>Good {getTimeOfDay()}, {facultyProfile?.name || "Faculty"} 👋</h2>
+        {facultyProfile?.dept_name && (
+          <p style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 4 }}>{facultyProfile.dept_name}</p>
+        )}
       </div>
 
       {/* Stats Grid */}

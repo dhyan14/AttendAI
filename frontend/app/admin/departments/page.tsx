@@ -4,42 +4,45 @@ import { apiFetch } from "@/lib/api";
 import TopBar from "@/components/layout/TopBar";
 import { Building2, Users, User, TrendingUp, Loader2, Plus, AlertCircle } from "lucide-react";
 
-interface Department {
+interface DeptWithStats {
   id: string;
   name: string;
   code: string;
   institute_name: string | null;
+  student_count: number;
+  faculty_count: number;
+  avg_attendance: number;
 }
 
+const DEPT_COLORS = ["var(--accent)", "var(--info)", "var(--warning)", "var(--danger)", "var(--success)"];
+
 export default function AdminDepartmentsPage() {
-  const [departments, setDepartments] = useState<Department[]>([]);
+  const [departments, setDepartments] = useState<DeptWithStats[]>([]);
+  const [orgName, setOrgName] = useState("Your Organization");
+  const [totalStudents, setTotalStudents] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  // Manual Add Department State
   const [showAddModal, setShowAddModal] = useState(false);
-  const [newDept, setNewDept] = useState({
-    name: "",
-    code: "",
-    institute_name: "",
-  });
+  const [newDept, setNewDept] = useState({ name: "", code: "", institute_name: "" });
   const [adding, setAdding] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
-    async function loadDepts() {
+    async function loadData() {
       try {
-        const res = await apiFetch("/departments");
-        if (res.ok) {
-          const data = await res.json();
-          setDepartments(data);
+        const statsRes = await apiFetch("/departments/stats");
+        if (statsRes.ok) {
+          const data = await statsRes.json();
+          setDepartments(data.departments || []);
+          setTotalStudents(data.total_students || 0);
         }
       } catch (err) {
-        console.error("Failed to load departments:", err);
+        console.error("Failed to load department stats:", err);
       } finally {
         setLoading(false);
       }
     }
-    loadDepts();
+    loadData();
   }, []);
 
   async function handleCreateDepartment(e: React.FormEvent) {
@@ -63,29 +66,22 @@ export default function AdminDepartmentsPage() {
         throw new Error(err.detail || "Failed to create department");
       }
 
-      const created = await res.json();
-      setDepartments(prev => [...prev, created]);
+      // Reload stats after adding
+      const statsRes = await apiFetch("/departments/stats");
+      if (statsRes.ok) {
+        const data = await statsRes.json();
+        setDepartments(data.departments || []);
+        setTotalStudents(data.total_students || 0);
+      }
+
       setShowAddModal(false);
-      setNewDept({
-        name: "",
-        code: "",
-        institute_name: "",
-      });
+      setNewDept({ name: "", code: "", institute_name: "" });
     } catch (err: any) {
       setErrorMsg(err.message);
     } finally {
       setAdding(false);
     }
   }
-
-
-  // Standard premium mock data to enrich the cards
-  const deptDetails: Record<string, { students: number; faculty: number; avgAtt: number; color: string }> = {
-    CSE: { students: 142, faculty: 6, avgAtt: 82.4, color: "var(--accent)" },
-    IT:  { students: 128, faculty: 5, avgAtt: 79.1, color: "var(--info)" },
-    ECE: { students: 96,  faculty: 4, avgAtt: 76.5, color: "var(--warning)" },
-    ME:  { students: 110, faculty: 4, avgAtt: 74.8, color: "var(--danger)" },
-  };
 
   return (
     <div className="page-content fade-up" style={{ paddingBottom: 100 }}>
@@ -94,16 +90,16 @@ export default function AdminDepartmentsPage() {
       {/* Header Stats */}
       <div className="card" style={{ marginBottom: 20, background: "linear-gradient(135deg, #1b1437 0%, var(--bg-card) 100%)", border: "1px solid var(--border-accent)" }}>
         <p style={{ color: "var(--text-secondary)", fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5 }}>University Overview</p>
-        <h2 style={{ fontSize: 20, fontWeight: 700, margin: "2px 0 6px" }}>Sardar Vallabhbhai Global University</h2>
-        <div style={{ display: "flex", gap: 12, fontSize: 13, color: "var(--text-secondary)", marginTop: 8 }}>
-          <span>🏢 {departments.length} Active Departments</span>
+        <h2 style={{ fontSize: 20, fontWeight: 700, margin: "2px 0 6px" }}>Academic Departments</h2>
+        <div style={{ display: "flex", gap: 12, fontSize: 13, color: "var(--text-secondary)", marginTop: 8, flexWrap: "wrap" }}>
+          <span>🏢 {departments.length} Departments</span>
           <span>•</span>
-          <span>🎓 ~476 Enrolled Students</span>
+          <span>🎓 {totalStudents} Enrolled Students</span>
         </div>
       </div>
 
-      <div className="section-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <span className="section-title" style={{ margin: 0 }}>Academic Departments</span>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <span className="section-title">Academic Departments</span>
         <button className="btn btn-primary" style={{ width: "auto", padding: "8px 14px", fontSize: 13, gap: 4, borderRadius: 10 }} onClick={() => setShowAddModal(true)}>
           <Plus size={14} /> Add Dept
         </button>
@@ -120,17 +116,13 @@ export default function AdminDepartmentsPage() {
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {departments.map((d) => {
-            const details = deptDetails[d.code] || { students: 100, faculty: 4, avgAtt: 75.0, color: "var(--accent)" };
+          {departments.map((d, idx) => {
+            const color = DEPT_COLORS[idx % DEPT_COLORS.length];
             return (
-              <div 
-                key={d.id} 
-                className="card" 
-                style={{ 
-                  borderLeft: `4px solid ${details.color}`,
-                  background: "var(--bg-card)",
-                  transition: "transform 0.15s ease",
-                }}
+              <div
+                key={d.id}
+                className="card"
+                style={{ borderLeft: `4px solid ${color}` }}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
                   <div>
@@ -139,19 +131,19 @@ export default function AdminDepartmentsPage() {
                       {d.institute_name || "Institute of Technology"}
                     </span>
                   </div>
-                  <span className="badge" style={{ backgroundColor: "var(--bg-card-2)", color: details.color, fontSize: 11, fontWeight: 700, border: `1px solid ${details.color}` }}>
+                  <span className="badge" style={{ backgroundColor: "var(--bg-card-2)", color, fontSize: 11, fontWeight: 700, border: `1px solid ${color}` }}>
                     {d.code}
                   </span>
                 </div>
 
                 <hr style={{ border: "none", borderTop: "1px solid var(--border)", margin: "12px 0" }} />
 
-                {/* Metrics Row */}
+                {/* Live Metrics Row */}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <Users size={15} style={{ color: "var(--text-secondary)" }} />
                     <div style={{ display: "flex", flexDirection: "column" }}>
-                      <span style={{ fontSize: 13, fontWeight: 600 }}>{details.students}</span>
+                      <span style={{ fontSize: 13, fontWeight: 600 }}>{d.student_count}</span>
                       <span style={{ fontSize: 9, color: "var(--text-secondary)", textTransform: "uppercase" }}>Students</span>
                     </div>
                   </div>
@@ -159,18 +151,18 @@ export default function AdminDepartmentsPage() {
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <User size={15} style={{ color: "var(--text-secondary)" }} />
                     <div style={{ display: "flex", flexDirection: "column" }}>
-                      <span style={{ fontSize: 13, fontWeight: 600 }}>{details.faculty}</span>
+                      <span style={{ fontSize: 13, fontWeight: 600 }}>{d.faculty_count}</span>
                       <span style={{ fontSize: 9, color: "var(--text-secondary)", textTransform: "uppercase" }}>Faculty</span>
                     </div>
                   </div>
 
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <TrendingUp size={15} style={{ color: details.avgAtt >= 75 ? "var(--success)" : "var(--warning)" }} />
+                    <TrendingUp size={15} style={{ color: d.avg_attendance >= 75 ? "var(--success)" : "var(--warning)" }} />
                     <div style={{ display: "flex", flexDirection: "column" }}>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: details.avgAtt >= 75 ? "var(--success)" : "var(--warning)" }}>
-                        {details.avgAtt}%
+                      <span style={{ fontSize: 13, fontWeight: 600, color: d.avg_attendance >= 75 ? "var(--success)" : "var(--warning)" }}>
+                        {d.avg_attendance}%
                       </span>
-                      <span style={{ fontSize: 9, color: "var(--text-secondary)", textTransform: "uppercase" }}>Avg Attendance</span>
+                      <span style={{ fontSize: 9, color: "var(--text-secondary)", textTransform: "uppercase" }}>Avg Attend.</span>
                     </div>
                   </div>
                 </div>
@@ -188,35 +180,15 @@ export default function AdminDepartmentsPage() {
             <form onSubmit={handleCreateDepartment}>
               <div className="form-group">
                 <label className="form-label">Department Name</label>
-                <input 
-                  type="text" 
-                  className="input" 
-                  placeholder="Computer Science & Engineering" 
-                  value={newDept.name} 
-                  onChange={e => setNewDept(prev => ({ ...prev, name: e.target.value }))} 
-                  required 
-                />
+                <input type="text" className="input" placeholder="Computer Science & Engineering" value={newDept.name} onChange={e => setNewDept(prev => ({ ...prev, name: e.target.value }))} required />
               </div>
               <div className="form-group">
                 <label className="form-label">Code / Abbreviation</label>
-                <input 
-                  type="text" 
-                  className="input" 
-                  placeholder="CSE" 
-                  value={newDept.code} 
-                  onChange={e => setNewDept(prev => ({ ...prev, code: e.target.value }))} 
-                  required 
-                />
+                <input type="text" className="input" placeholder="CSE" value={newDept.code} onChange={e => setNewDept(prev => ({ ...prev, code: e.target.value }))} required />
               </div>
               <div className="form-group">
                 <label className="form-label">Institute Name (optional)</label>
-                <input 
-                  type="text" 
-                  className="input" 
-                  placeholder="Institute of Technology" 
-                  value={newDept.institute_name} 
-                  onChange={e => setNewDept(prev => ({ ...prev, institute_name: e.target.value }))} 
-                />
+                <input type="text" className="input" placeholder="Institute of Technology" value={newDept.institute_name} onChange={e => setNewDept(prev => ({ ...prev, institute_name: e.target.value }))} />
               </div>
 
               {errorMsg && (
