@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func, or_, delete as sql_delete
 from app.database import get_db
 from app.api.deps import require_super_admin
 from app.models import (
     Organization, Department, Student, Faculty, User, UserRole, Subject,
-    Lecture, AttendanceRecord, AttendanceDispute, DisputeStatus,
+    SubjectAssignment, Lecture, AttendanceRecord, AttendanceEvidence,
+    AttendanceDispute, FaceEmbedding, DisputeStatus,
 )
 from pydantic import BaseModel
 from typing import Optional, List
@@ -171,9 +172,62 @@ async def delete_org(
     org = await db.get(Organization, uuid.UUID(org_id))
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
+    org_uuid = uuid.UUID(org_id)
+    name = org.name
+
+    # Collect all dept IDs in this org
+    dept_res = await db.execute(select(Department.id).where(Department.org_id == org_uuid))
+    dept_ids = [r[0] for r in dept_res.all()]
+
+    if dept_ids:
+        # Collect lecture IDs inside those depts
+        subj_res = await db.execute(select(Subject.id).where(Subject.dept_id.in_(dept_ids)))
+        subj_ids = [r[0] for r in subj_res.all()]
+
+        lec_ids = []
+        if subj_ids:
+            lec_res = await db.execute(select(Lecture.id).where(Lecture.subject_id.in_(subj_ids)))
+            lec_ids = [r[0] for r in lec_res.all()]
+
+        # Collect student IDs
+        stu_res = await db.execute(select(Student.id).where(Student.dept_id.in_(dept_ids)))
+        stu_ids = [r[0] for r in stu_res.all()]
+
+        # Collect faculty IDs
+        fac_res = await db.execute(select(Faculty.id).where(Faculty.dept_id.in_(dept_ids)))
+        fac_ids = [r[0] for r in fac_res.all()]
+
+        # Delete in FK-safe order
+        if lec_ids:
+            await db.execute(sql_delete(AttendanceEvidence).where(AttendanceEvidence.lecture_id.in_(lec_ids)))
+            await db.execute(sql_delete(AttendanceDispute).where(AttendanceDispute.lecture_id.in_(lec_ids)))
+            await db.execute(sql_delete(AttendanceRecord).where(AttendanceRecord.lecture_id.in_(lec_ids)))
+            await db.execute(sql_delete(Lecture).where(Lecture.id.in_(lec_ids)))
+
+        if subj_ids:
+            await db.execute(sql_delete(SubjectAssignment).where(SubjectAssignment.subject_id.in_(subj_ids)))
+            await db.execute(sql_delete(Subject).where(Subject.id.in_(subj_ids)))
+
+        if stu_ids:
+            await db.execute(sql_delete(FaceEmbedding).where(FaceEmbedding.student_id.in_(stu_ids)))
+            await db.execute(sql_delete(Student).where(Student.id.in_(stu_ids)))
+
+        if fac_ids:
+            await db.execute(sql_delete(Faculty).where(Faculty.id.in_(fac_ids)))
+
+        await db.execute(sql_delete(Department).where(Department.org_id == org_uuid))
+
+    # Delete all users in this org (except super_admin)
+    await db.execute(
+        sql_delete(User).where(
+            User.org_id == org_uuid,
+            User.role != UserRole.super_admin
+        )
+    )
+
     await db.delete(org)
     await db.commit()
-    return {"message": f"Organization '{org.name}' deleted"}
+    return {"message": f"Organization '{name}' deleted"}
 
 
 # ═══════════════════════════════════════════════════════════
@@ -263,9 +317,50 @@ async def delete_department(
     dept = await db.get(Department, uuid.UUID(dept_id))
     if not dept:
         raise HTTPException(status_code=404, detail="Department not found")
+    dept_uuid = uuid.UUID(dept_id)
+    name = dept.name
+
+    # Get all subject IDs in this dept
+    subj_res = await db.execute(select(Subject.id).where(Subject.dept_id == dept_uuid))
+    subj_ids = [r[0] for r in subj_res.all()]
+
+    # Get all lecture IDs from those subjects
+    lec_ids = []
+    if subj_ids:
+        lec_res = await db.execute(select(Lecture.id).where(Lecture.subject_id.in_(subj_ids)))
+        lec_ids = [r[0] for r in lec_res.all()]
+
+    # Get student IDs in this dept
+    stu_res = await db.execute(select(Student.id).where(Student.dept_id == dept_uuid))
+    stu_ids = [r[0] for r in stu_res.all()]
+
+    # Get faculty IDs in this dept
+    fac_res = await db.execute(select(Faculty.id).where(Faculty.dept_id == dept_uuid))
+    fac_ids = [r[0] for r in fac_res.all()]
+
+    # Delete in FK-safe order
+    if lec_ids:
+        await db.execute(sql_delete(AttendanceEvidence).where(AttendanceEvidence.lecture_id.in_(lec_ids)))
+        await db.execute(sql_delete(AttendanceDispute).where(AttendanceDispute.lecture_id.in_(lec_ids)))
+        await db.execute(sql_delete(AttendanceRecord).where(AttendanceRecord.lecture_id.in_(lec_ids)))
+        await db.execute(sql_delete(Lecture).where(Lecture.id.in_(lec_ids)))
+
+    if subj_ids:
+        await db.execute(sql_delete(SubjectAssignment).where(SubjectAssignment.subject_id.in_(subj_ids)))
+        await db.execute(sql_delete(Subject).where(Subject.id.in_(subj_ids)))
+
+    if stu_ids:
+        await db.execute(sql_delete(FaceEmbedding).where(FaceEmbedding.student_id.in_(stu_ids)))
+        await db.execute(sql_delete(AttendanceDispute).where(AttendanceDispute.student_id.in_(stu_ids)))
+        await db.execute(sql_delete(Student).where(Student.id.in_(stu_ids)))
+
+    if fac_ids:
+        await db.execute(sql_delete(SubjectAssignment).where(SubjectAssignment.faculty_id.in_(fac_ids)))
+        await db.execute(sql_delete(Faculty).where(Faculty.id.in_(fac_ids)))
+
     await db.delete(dept)
     await db.commit()
-    return {"message": f"Department '{dept.name}' deleted"}
+    return {"message": f"Department '{name}' deleted"}
 
 
 # ═══════════════════════════════════════════════════════════
@@ -378,13 +473,27 @@ async def delete_student(
     student = await db.get(Student, uuid.UUID(student_id))
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
+    stu_uuid = uuid.UUID(student_id)
     name = student.name
-    # Also delete their user account if linked
-    if student.user_id:
-        user = await db.get(User, student.user_id)
-        if user:
-            await db.delete(user)
-    await db.delete(student)
+    user_id = student.user_id
+
+    # Delete child records first
+    await db.execute(sql_delete(FaceEmbedding).where(FaceEmbedding.student_id == stu_uuid))
+    await db.execute(sql_delete(AttendanceDispute).where(AttendanceDispute.student_id == stu_uuid))
+
+    # Delete attendance records (and their evidence)
+    att_res = await db.execute(select(AttendanceRecord.id).where(AttendanceRecord.student_id == stu_uuid))
+    att_ids = [r[0] for r in att_res.all()]
+    if att_ids:
+        await db.execute(sql_delete(AttendanceEvidence).where(AttendanceEvidence.attendance_id.in_(att_ids)))
+        await db.execute(sql_delete(AttendanceRecord).where(AttendanceRecord.id.in_(att_ids)))
+
+    await db.execute(sql_delete(Student).where(Student.id == stu_uuid))
+
+    # Delete linked user account
+    if user_id:
+        await db.execute(sql_delete(User).where(User.id == user_id))
+
     await db.commit()
     return {"message": f"Student '{name}' deleted"}
 
@@ -484,12 +593,29 @@ async def delete_faculty(
     fac = await db.get(Faculty, uuid.UUID(faculty_id))
     if not fac:
         raise HTTPException(status_code=404, detail="Faculty not found")
+    fac_uuid = uuid.UUID(faculty_id)
     name = fac.name
-    if fac.user_id:
-        user = await db.get(User, fac.user_id)
-        if user:
-            await db.delete(user)
-    await db.delete(fac)
+    user_id = fac.user_id
+
+    # Delete subject assignments for this faculty first
+    await db.execute(sql_delete(SubjectAssignment).where(SubjectAssignment.faculty_id == fac_uuid))
+
+    # Nullify lecture references (keep lecture history, just unlink faculty)
+    # Alternatively delete lectures - using nullify to preserve records
+    lec_res = await db.execute(select(Lecture.id).where(Lecture.faculty_id == fac_uuid))
+    lec_ids = [r[0] for r in lec_res.all()]
+    if lec_ids:
+        await db.execute(sql_delete(AttendanceEvidence).where(AttendanceEvidence.lecture_id.in_(lec_ids)))
+        await db.execute(sql_delete(AttendanceDispute).where(AttendanceDispute.lecture_id.in_(lec_ids)))
+        await db.execute(sql_delete(AttendanceRecord).where(AttendanceRecord.lecture_id.in_(lec_ids)))
+        await db.execute(sql_delete(Lecture).where(Lecture.id.in_(lec_ids)))
+
+    await db.execute(sql_delete(Faculty).where(Faculty.id == fac_uuid))
+
+    # Delete linked user account
+    if user_id:
+        await db.execute(sql_delete(User).where(User.id == user_id))
+
     await db.commit()
     return {"message": f"Faculty '{name}' deleted"}
 
