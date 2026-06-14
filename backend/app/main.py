@@ -17,16 +17,6 @@ async def lifespan(app: FastAPI):
         print("[STARTUP] Database tables created/verified successfully")
     except Exception as e:
         print(f"[STARTUP ERROR] Table creation failed: {e}")
-
-    # Seed database on startup
-    from app.database import get_db
-    from app.services.seed_service import seed_database
-    try:
-        async for db in get_db():
-            await seed_database(db)
-            break
-    except Exception as e:
-        print(f"[STARTUP ERROR] Database seeding failed: {e}")
     yield
 
 app = FastAPI(
