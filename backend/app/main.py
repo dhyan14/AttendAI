@@ -54,7 +54,7 @@ app.include_router(attendance.router,  prefix="/attendance",  tags=["Attendance"
 app.include_router(recognition.router,  prefix="/face",        tags=["Face Recognition"])
 app.include_router(disputes.router,     prefix="/disputes",    tags=["Disputes"])
 app.include_router(reports.router,      prefix="/reports",     tags=["Reports"])
-app.include_router(super_admin.router,  prefix="/super",       tags=["Super Admin"])
+app.include_router(super_admin.router,  prefix="/admin",       tags=["Super Admin"])
 
 
 @app.get("/health")
