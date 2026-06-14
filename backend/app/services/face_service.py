@@ -1,4 +1,6 @@
 import numpy as np
+import asyncio
+import concurrent.futures
 from typing import Optional
 
 
@@ -8,17 +10,25 @@ class FaceService:
     def __init__(self):
         self.model = None
         self.initialized = False
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+
+    def _load_model(self):
+        """Blocking model load — runs in a thread pool."""
+        from insightface.app import FaceAnalysis
+        model = FaceAnalysis(
+            name="buffalo_l",
+            providers=["CPUExecutionProvider"]
+        )
+        # Use smaller det_size to reduce RAM usage on Railway
+        model.prepare(ctx_id=-1, det_size=(320, 320))
+        return model
 
     async def initialize(self):
-        """Load InsightFace buffalo_l model. Called once at startup."""
+        """Load InsightFace buffalo_l model in a thread (non-blocking)."""
+        loop = asyncio.get_event_loop()
         try:
-            import insightface
-            from insightface.app import FaceAnalysis
-            self.model = FaceAnalysis(
-                name="buffalo_l",
-                providers=["CPUExecutionProvider"]
-            )
-            self.model.prepare(ctx_id=-1, det_size=(640, 640))
+            print("[FaceService] Loading InsightFace buffalo_l model...")
+            self.model = await loop.run_in_executor(self._executor, self._load_model)
             self.initialized = True
             print("✅ InsightFace buffalo_l model ready")
         except Exception as e:
@@ -28,7 +38,10 @@ class FaceService:
     def _decode_image(self, image_bytes: bytes):
         import cv2
         nparr = np.frombuffer(image_bytes, np.uint8)
-        return cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if img is None:
+            raise ValueError("Could not decode image — unsupported format or corrupted file")
+        return img
 
     def get_embeddings(self, image_bytes: bytes) -> list:
         """
@@ -58,56 +71,40 @@ class FaceService:
 
     def match_faces(
         self,
-        probe_embeddings: list[list[float]],
-        stored_embeddings: list[dict],   # [{"student_id": str, "embedding": list[float], ...}]
+        probe_embeddings: list,
+        stored_embeddings: list,   # [{"student_id": str, "embedding": list[float], ...}]
         threshold: float = 0.45,
-    ) -> list[dict]:
+    ) -> list:
         """
-        Match detected faces from a classroom image against stored student embeddings.
-
-        Args:
-            probe_embeddings: list of embedding vectors detected in the classroom image
-            stored_embeddings: list of dicts with student_id + embedding vector
-            threshold: cosine similarity threshold (higher = stricter match)
-
-        Returns:
-            list of {"student_id": str, "confidence": float} for matched students.
-            Deduplicates: each student appears at most once (highest confidence).
+        Match detected faces against stored student embeddings using cosine similarity.
+        Returns list of {"student_id": str, "confidence": float} for matched students.
         """
         if not probe_embeddings or not stored_embeddings:
             return []
 
-        probe_arr   = np.array(probe_embeddings, dtype=np.float32)   # (P, 512)
+        probe_arr   = np.array(probe_embeddings, dtype=np.float32)
         stored_vecs = np.array(
             [s["embedding"] for s in stored_embeddings], dtype=np.float32
-        )  # (S, 512)
+        )
 
-        # Normalize (embeddings from InsightFace are already unit-norm, but be safe)
+        # Normalize
         probe_norm  = probe_arr  / (np.linalg.norm(probe_arr,  axis=1, keepdims=True) + 1e-8)
         stored_norm = stored_vecs / (np.linalg.norm(stored_vecs, axis=1, keepdims=True) + 1e-8)
 
         # (P, S) cosine similarity matrix
         sim_matrix = probe_norm @ stored_norm.T
 
-        matched: dict[str, float] = {}   # student_id → best confidence
+        matched: dict = {}   # student_id → best confidence
 
         for p_idx in range(len(probe_embeddings)):
-            best_s_idx  = int(np.argmax(sim_matrix[p_idx]))
-            best_sim    = float(sim_matrix[p_idx, best_s_idx])
+            best_s_idx = int(np.argmax(sim_matrix[p_idx]))
+            best_sim   = float(sim_matrix[p_idx, best_s_idx])
             if best_sim >= threshold:
                 sid = stored_embeddings[best_s_idx]["student_id"]
-                # Keep the highest confidence match per student
                 if sid not in matched or best_sim > matched[sid]:
                     matched[sid] = round(best_sim, 4)
 
         return [{"student_id": sid, "confidence": conf} for sid, conf in matched.items()]
-
-    def cosine_sim(self, a: list[float], b: list[float]) -> float:
-        """Utility: cosine similarity between two vectors."""
-        va = np.array(a, dtype=np.float32)
-        vb = np.array(b, dtype=np.float32)
-        denom = np.linalg.norm(va) * np.linalg.norm(vb)
-        return float(np.dot(va, vb) / (denom + 1e-8))
 
 
 face_service = FaceService()
