@@ -1,7 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import AppShell from "@/components/layout/AppShell";
 import { Loader2 } from "lucide-react";
 
 export default function SuperLayout({ children }: { children: React.ReactNode }) {
@@ -27,5 +26,7 @@ export default function SuperLayout({ children }: { children: React.ReactNode })
     );
   }
 
-  return <AppShell role="super_admin">{children}</AppShell>;
+  // Super admin dashboard has its own self-contained navigation — no AppShell needed
+  return <>{children}</>;
 }
+
