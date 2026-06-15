@@ -810,3 +810,145 @@ p  { font-size: 14px; line-height: 1.6; color: var(--text-secondary); }
   background: radial-gradient(circle, rgba(124,111,224,0.2) 0%, transparent 70%);
   pointer-events: none;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   RESPONSIVE LAYOUT FOR PC/DESKTOP (min-width: 768px)
+   ═══════════════════════════════════════════════════════════ */
+@media (min-width: 768px) {
+  body {
+    background: #04030a;
+  }
+
+  /* Reset mobile-frame for wider layouts on PC when bottom-nav is present */
+  body:has(.bottom-nav) .mobile-frame {
+    max-width: 100% !important;
+    padding-left: 240px; /* offset for the sidebar */
+    box-shadow: none;
+    overflow: visible;
+    background: var(--bg);
+  }
+
+  /* When bottom-nav is NOT present (like Login/Welcome pages), center it as a card */
+  body:not(:has(.bottom-nav)) .mobile-frame {
+    max-width: 440px !important;
+    margin: 60px auto;
+    border-radius: var(--r-xl);
+    border: 1px solid var(--border);
+    box-shadow: 0 16px 48px rgba(0,0,0,0.8);
+    min-height: auto;
+    background: var(--bg-card);
+    padding: 12px;
+  }
+
+  /* Transform bottom-nav to a fixed left sidebar */
+  .bottom-nav {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 240px;
+    height: 100vh;
+    transform: none;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: stretch;
+    padding: 24px 16px;
+    border-top: none;
+    border-right: 1px solid var(--border);
+    background: var(--bg-card);
+    z-index: 1000;
+  }
+
+  /* Sidebar items */
+  .nav-item {
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    font-size: 14px;
+    justify-content: flex-start;
+    border-radius: var(--r-md);
+    flex: none;
+    margin-bottom: 4px;
+    height: auto;
+    color: var(--text-secondary);
+  }
+
+  .nav-item.active {
+    background: var(--accent-dim);
+    color: var(--accent-2);
+  }
+
+  /* Remove mobile indicator dot */
+  .nav-item.active::after {
+    display: none;
+  }
+
+  /* Center FAB transforms into a full-width call-to-action button in the sidebar */
+  .nav-item-center {
+    position: static;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    margin: 12px 0;
+    order: -1; /* Place at the top of the sidebar */
+  }
+
+  .nav-fab {
+    width: 100%;
+    height: 48px;
+    border-radius: var(--r-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    position: static;
+    box-shadow: 0 4px 16px var(--accent-glow);
+    border: none;
+  }
+
+  .nav-item-center span {
+    display: none; /* Hide standard label beneath the FAB */
+  }
+
+  .nav-fab::after {
+    content: 'Take Attendance';
+    font-size: 14px;
+    font-weight: 700;
+    color: #fff;
+  }
+
+  /* Standard page layout container inside responsive mobile-frame */
+  .page-content {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 40px 48px 40px;
+    padding-bottom: 40px !important;
+  }
+
+  /* Grid layout for setup/take attendance page */
+  .take-container {
+    max-width: 1200px !important;
+    padding: 40px 48px !important;
+  }
+
+  .step-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    align-items: start;
+  }
+
+  .step-footer-full {
+    grid-column: span 2;
+    margin-top: 12px;
+  }
+
+  .step3-grid {
+    display: grid;
+    grid-template-columns: 1.3fr 0.7fr;
+    gap: 24px;
+    align-items: start;
+  }
+}
+

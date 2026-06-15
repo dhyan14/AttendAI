@@ -562,7 +562,7 @@ export default function TakeAttendancePage() {
   const canStart      = !!selSubject && !!lecNo && !!division && photos.length > 0;
 
   return (
-    <div style={{ maxWidth: 600, margin: "0 auto", padding: "20px 16px 120px" }}>
+    <div className="take-container" style={{ margin: "0 auto", padding: "20px 16px 120px" }}>
       <Toast msg={toast} />
       <canvas ref={canvasRef} style={{ display: "none" }} />
 
@@ -601,144 +601,150 @@ export default function TakeAttendancePage() {
 
       {/* ══════════════ STEP 1 ══════════════ */}
       {step === 1 && (
-        <>
-          {/* Subject selector */}
-          <div className="card" style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.8 }}>Subject</div>
-            {subjects.length === 0
-              ? <div style={{ fontSize: 13, color: "var(--text-muted)" }}>No subjects found. Ask admin to add subjects.</div>
-              : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  {subjects.map(s => (
-                    <button
-                      key={s.id}
-                      onClick={() => setSelSubject(sel => sel?.id === s.id ? null : s)}
-                      style={{
-                        display: "flex", alignItems: "center", gap: 12, padding: "11px 14px",
-                        borderRadius: 12,
-                        border: `1.5px solid ${selSubject?.id === s.id ? "var(--accent)" : "var(--border)"}`,
-                        background: selSubject?.id === s.id ? "var(--accent-dim)" : "var(--bg-card-2)",
-                        cursor: "pointer", textAlign: "left", fontFamily: "inherit",
-                      }}
-                    >
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 14, fontWeight: 700, color: selSubject?.id === s.id ? "var(--accent-2)" : "var(--text)" }}>{s.name}</div>
-                        <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 1 }}>
-                          {s.code}{s.semester ? ` · Sem ${s.semester}` : ""}
+        <div className="step-grid">
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {/* Subject selector */}
+            <div className="card" style={{ margin: 0 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.8 }}>Subject</div>
+              {subjects.length === 0
+                ? <div style={{ fontSize: 13, color: "var(--text-muted)" }}>No subjects found. Ask admin to add subjects.</div>
+                : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {subjects.map(s => (
+                      <button
+                        key={s.id}
+                        onClick={() => setSelSubject(sel => sel?.id === s.id ? null : s)}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 12, padding: "11px 14px",
+                          borderRadius: 12,
+                          border: `1.5px solid ${selSubject?.id === s.id ? "var(--accent)" : "var(--border)"}`,
+                          background: selSubject?.id === s.id ? "var(--accent-dim)" : "var(--bg-card-2)",
+                          cursor: "pointer", textAlign: "left", fontFamily: "inherit",
+                        }}
+                      >
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: selSubject?.id === s.id ? "var(--accent-2)" : "var(--text)" }}>{s.name}</div>
+                          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 1 }}>
+                            {s.code}{s.semester ? ` · Sem ${s.semester}` : ""}
+                          </div>
                         </div>
-                      </div>
-                      {selSubject?.id === s.id && <CheckCircle2 size={15} style={{ color: "var(--accent-2)", flexShrink: 0 }} />}
-                    </button>
-                  ))}
-                </div>
-              )}
-          </div>
+                        {selSubject?.id === s.id && <CheckCircle2 size={15} style={{ color: "var(--accent-2)", flexShrink: 0 }} />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+            </div>
 
-          {/* Lecture details */}
-          <div className="card" style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.8 }}>Lecture Details</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <div>
-                <label style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, display: "block", marginBottom: 4 }}>Lecture No *</label>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-card-2)" }}>
-                  <Hash size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+            {/* Lecture details */}
+            <div className="card" style={{ margin: 0 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.8 }}>Lecture Details</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, display: "block", marginBottom: 4 }}>Lecture No *</label>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-card-2)" }}>
+                    <Hash size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                    <input
+                      type="number" min="1" value={lecNo}
+                      onChange={e => setLecNo(e.target.value)}
+                      placeholder="e.g. 1"
+                      style={{ background: "none", border: "none", outline: "none", fontSize: 14, fontWeight: 700, color: "var(--text)", fontFamily: "inherit", width: "100%" }}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, display: "block", marginBottom: 4 }}>Division *</label>
                   <input
-                    type="number" min="1" value={lecNo}
-                    onChange={e => setLecNo(e.target.value)}
-                    placeholder="e.g. 1"
-                    style={{ background: "none", border: "none", outline: "none", fontSize: 14, fontWeight: 700, color: "var(--text)", fontFamily: "inherit", width: "100%" }}
+                    type="text" value={division}
+                    onChange={e => setDivision(e.target.value)}
+                    placeholder="e.g. A" maxLength={5}
+                    style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-card-2)", outline: "none", fontSize: 14, fontWeight: 700, color: "var(--text)", fontFamily: "inherit", boxSizing: "border-box" }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, display: "block", marginBottom: 4 }}>Batch</label>
+                  <select
+                    value={batch} onChange={e => setBatch(e.target.value)}
+                    style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-card-2)", outline: "none", fontSize: 13, color: "var(--text)", fontFamily: "inherit", appearance: "none" }}
+                  >
+                    {["All", "B1", "B2", "B3", "B4"].map(b => <option key={b} value={b}>{b}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, display: "block", marginBottom: 4 }}>Date</label>
+                  <input
+                    type="date" value={lecDate} onChange={e => setLecDate(e.target.value)}
+                    style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-card-2)", outline: "none", fontSize: 13, color: "var(--text)", fontFamily: "inherit", boxSizing: "border-box" }}
                   />
                 </div>
               </div>
-              <div>
-                <label style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, display: "block", marginBottom: 4 }}>Division *</label>
-                <input
-                  type="text" value={division}
-                  onChange={e => setDivision(e.target.value)}
-                  placeholder="e.g. A" maxLength={5}
-                  style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-card-2)", outline: "none", fontSize: 14, fontWeight: 700, color: "var(--text)", fontFamily: "inherit", boxSizing: "border-box" }}
-                />
+            </div>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {/* Photos */}
+            <div className="card" style={{ margin: 0 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.8 }}>
+                Classroom Photos ({photos.length}/5)
               </div>
-              <div>
-                <label style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, display: "block", marginBottom: 4 }}>Batch</label>
-                <select
-                  value={batch} onChange={e => setBatch(e.target.value)}
-                  style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-card-2)", outline: "none", fontSize: 13, color: "var(--text)", fontFamily: "inherit", appearance: "none" }}
-                >
-                  {["All", "B1", "B2", "B3", "B4"].map(b => <option key={b} value={b}>{b}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, display: "block", marginBottom: 4 }}>Date</label>
-                <input
-                  type="date" value={lecDate} onChange={e => setLecDate(e.target.value)}
-                  style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-card-2)", outline: "none", fontSize: 13, color: "var(--text)", fontFamily: "inherit", boxSizing: "border-box" }}
-                />
+              {photoPreviews.length > 0 && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 10 }}>
+                  {photoPreviews.map((src, i) => (
+                    <div key={i} style={{ position: "relative", borderRadius: 10, overflow: "hidden", aspectRatio: "4/3" }}>
+                      <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      <button
+                        onClick={() => removePhoto(i)}
+                        style={{ position: "absolute", top: 4, right: 4, width: 22, height: 22, borderRadius: "50%", background: "rgba(240,90,90,0.9)", border: "none", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                      <div style={{ position: "absolute", bottom: 3, left: 4, background: "rgba(0,0,0,0.6)", borderRadius: 4, fontSize: 9, fontWeight: 700, color: "#fff", padding: "2px 5px" }}>#{i+1}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {photos.length < 5 && (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <label style={{ flex: 1, cursor: "pointer" }}>
+                    <input type="file" accept="image/*" multiple style={{ display: "none" }} onChange={e => addPhotos(e.target.files)} />
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "12px", borderRadius: 12, border: "2px dashed var(--border)", background: "var(--bg-card-2)", color: "var(--text-secondary)", fontSize: 13, fontWeight: 700 }}>
+                      <Upload size={15} /> Upload
+                    </div>
+                  </label>
+                  <button
+                    onClick={startCamera}
+                    style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "12px", borderRadius: 12, border: "2px dashed rgba(34,211,122,0.3)", background: "rgba(34,211,122,0.05)", color: "#22d37a", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+                  >
+                    <Camera size={15} /> Camera
+                  </button>
+                </div>
+              )}
+              <div style={{ fontSize: 11, color: "var(--text-muted)", textAlign: "center", marginTop: 8 }}>
+                Upload up to 5 classroom photos — more angles = better accuracy
               </div>
             </div>
           </div>
 
-          {/* Photos */}
-          <div className="card" style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.8 }}>
-              Classroom Photos ({photos.length}/5)
-            </div>
-            {photoPreviews.length > 0 && (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 10 }}>
-                {photoPreviews.map((src, i) => (
-                  <div key={i} style={{ position: "relative", borderRadius: 10, overflow: "hidden", aspectRatio: "4/3" }}>
-                    <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    <button
-                      onClick={() => removePhoto(i)}
-                      style={{ position: "absolute", top: 4, right: 4, width: 22, height: 22, borderRadius: "50%", background: "rgba(240,90,90,0.9)", border: "none", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
-                    >
-                      <Trash2 size={11} />
-                    </button>
-                    <div style={{ position: "absolute", bottom: 3, left: 4, background: "rgba(0,0,0,0.6)", borderRadius: 4, fontSize: 9, fontWeight: 700, color: "#fff", padding: "2px 5px" }}>#{i+1}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-            {photos.length < 5 && (
-              <div style={{ display: "flex", gap: 8 }}>
-                <label style={{ flex: 1, cursor: "pointer" }}>
-                  <input type="file" accept="image/*" multiple style={{ display: "none" }} onChange={e => addPhotos(e.target.files)} />
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "12px", borderRadius: 12, border: "2px dashed var(--border)", background: "var(--bg-card-2)", color: "var(--text-secondary)", fontSize: 13, fontWeight: 700 }}>
-                    <Upload size={15} /> Upload
-                  </div>
-                </label>
-                <button
-                  onClick={startCamera}
-                  style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "12px", borderRadius: 12, border: "2px dashed rgba(34,211,122,0.3)", background: "rgba(34,211,122,0.05)", color: "#22d37a", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
-                >
-                  <Camera size={15} /> Camera
-                </button>
-              </div>
-            )}
-            <div style={{ fontSize: 11, color: "var(--text-muted)", textAlign: "center", marginTop: 8 }}>
-              Upload up to 5 classroom photos — more angles = better accuracy
-            </div>
+          <div className="step-footer-full">
+            <button
+              onClick={startRecognition}
+              disabled={!canStart || creating}
+              style={{
+                width: "100%", padding: "16px", borderRadius: 16,
+                background: canStart && !creating ? "var(--accent)" : "var(--bg-card-2)",
+                color: canStart && !creating ? "#fff" : "var(--text-muted)",
+                fontWeight: 800, fontSize: 16, border: "none",
+                cursor: canStart && !creating ? "pointer" : "not-allowed",
+                fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+                transition: "all 0.2s",
+              }}
+            >
+              {creating
+                ? <><Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> Creating lecture…</>
+                : <><Sparkles size={18} /> Start AI Recognition</>}
+            </button>
+            {!selSubject && <div style={{ textAlign: "center", fontSize: 11, color: "var(--text-muted)", marginTop: 8 }}>Select a subject to continue</div>}
           </div>
-
-          <button
-            onClick={startRecognition}
-            disabled={!canStart || creating}
-            style={{
-              width: "100%", padding: "16px", borderRadius: 16,
-              background: canStart && !creating ? "var(--accent)" : "var(--bg-card-2)",
-              color: canStart && !creating ? "#fff" : "var(--text-muted)",
-              fontWeight: 800, fontSize: 16, border: "none",
-              cursor: canStart && !creating ? "pointer" : "not-allowed",
-              fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-              transition: "all 0.2s",
-            }}
-          >
-            {creating
-              ? <><Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> Creating lecture…</>
-              : <><Sparkles size={18} /> Start AI Recognition</>}
-          </button>
-          {!selSubject && <div style={{ textAlign: "center", fontSize: 11, color: "var(--text-muted)", marginTop: 8 }}>Select a subject to continue</div>}
-        </>
+        </div>
       )}
 
       {/* ══════════════ STEP 2 ══════════════ */}
@@ -760,167 +766,171 @@ export default function TakeAttendancePage() {
 
       {/* ══════════════ STEP 3 — REVIEW ══════════════ */}
       {step === 3 && aiResult && (
-        <>
-          {aiResult.warning && (
-            <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "12px 14px", borderRadius: 12, marginBottom: 12, background: "rgba(245,200,66,0.08)", border: "1px solid rgba(245,200,66,0.2)" }}>
-              <AlertTriangle size={15} style={{ color: "#f5c842", flexShrink: 0, marginTop: 1 }} />
-              <div style={{ fontSize: 12, color: "#f5c842" }}>{aiResult.warning}</div>
-            </div>
-          )}
-
-          {/* Lecture pill */}
-          {lecture && (
-            <div style={{ padding: "10px 14px", borderRadius: 12, background: "var(--bg-card-2)", border: "1px solid var(--border)", marginBottom: 12, fontSize: 12, color: "var(--text-secondary)" }}>
-              <span style={{ fontWeight: 700, color: "var(--text)" }}>{lecture.subject_name}</span>
-              {" · "}Lec #{lecture.lecture_no} · Div {lecture.division}
-              {lecture.batch !== "All" && ` · ${lecture.batch}`}
-            </div>
-          )}
-
-          {/* Detection summary stats */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 14 }}>
-            {[
-              { label: "Detected", value: aiResult.detected_faces, color: "var(--accent)", icon: <Users size={14} /> },
-              { label: "Matched", value: aiResult.matched_faces ?? presentCount, color: "#22d37a", icon: <UserCheck size={14} /> },
-              { label: "Present", value: presentCount, color: "#22d37a", icon: <Check size={14} /> },
-              { label: "Absent", value: totalStudents - presentCount, color: "var(--danger)", icon: <UserX size={14} /> },
-            ].map(({ label, value, color, icon }) => (
-              <div key={label} className="card" style={{ textAlign: "center", padding: "12px 6px" }}>
-                <div style={{ color, marginBottom: 4, display: "flex", justifyContent: "center" }}>{icon}</div>
-                <div style={{ fontSize: 22, fontWeight: 900, color }}>{value}</div>
-                <div style={{ fontSize: 9, color: "var(--text-muted)", marginTop: 2, textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</div>
+        <div className="step3-grid">
+          <div className="step3-left-col" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {aiResult.warning && (
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "12px 14px", borderRadius: 12, background: "rgba(245,200,66,0.08)", border: "1px solid rgba(245,200,66,0.2)" }}>
+                <AlertTriangle size={15} style={{ color: "#f5c842", flexShrink: 0, marginTop: 1 }} />
+                <div style={{ fontSize: 12, color: "#f5c842" }}>{aiResult.warning}</div>
               </div>
-            ))}
+            )}
+
+            {/* Lecture pill */}
+            {lecture && (
+              <div style={{ padding: "10px 14px", borderRadius: 12, background: "var(--bg-card-2)", border: "1px solid var(--border)", fontSize: 12, color: "var(--text-secondary)" }}>
+                <span style={{ fontWeight: 700, color: "var(--text)" }}>{lecture.subject_name}</span>
+                {" · "}Lec #{lecture.lecture_no} · Div {lecture.division}
+                {lecture.batch !== "All" && ` · ${lecture.batch}`}
+              </div>
+            )}
+
+            {/* Detection summary stats */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+              {[
+                { label: "Detected", value: aiResult.detected_faces, color: "var(--accent)", icon: <Users size={14} /> },
+                { label: "Matched", value: aiResult.matched_faces ?? presentCount, color: "#22d37a", icon: <UserCheck size={14} /> },
+                { label: "Present", value: presentCount, color: "#22d37a", icon: <Check size={14} /> },
+                { label: "Absent", value: totalStudents - presentCount, color: "var(--danger)", icon: <UserX size={14} /> },
+              ].map(({ label, value, color, icon }) => (
+                <div key={label} className="card" style={{ textAlign: "center", padding: "12px 6px" }}>
+                  <div style={{ color, marginBottom: 4, display: "flex", justifyContent: "center" }}>{icon}</div>
+                  <div style={{ fontSize: 22, fontWeight: 900, color }}>{value}</div>
+                  <div style={{ fontSize: 9, color: "var(--text-muted)", marginTop: 2, textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* ── ANNOTATED PHOTO VIEWER ─────────────────────────────── */}
+            {aiResult.image_previews.length > 0 && (
+              <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+                <div style={{ padding: "12px 14px 10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.8 }}>
+                    📸 Tap photo to enlarge
+                  </div>
+                  <div style={{ display: "flex", gap: 12, fontSize: 11, fontWeight: 700 }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 5, color: "#22d37a" }}>
+                      <span style={{ width: 10, height: 10, border: "2px solid #22d37a", display: "inline-block", borderRadius: 1 }} />
+                      Matched
+                    </span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 5, color: "#ff453a" }}>
+                      <span style={{ width: 10, height: 10, border: "2px solid #ff453a", display: "inline-block", borderRadius: 1 }} />
+                      Unmatched
+                    </span>
+                  </div>
+                </div>
+
+                {/* Photos — show first photo full width, rest as strip */}
+                {aiResult.image_previews.map((src, i) => {
+                  const annotations = aiResult.image_annotations?.[i] ?? [];
+                  const matched   = annotations.filter(a => a.matched).length;
+                  const unmatched = annotations.filter(a => !a.matched).length;
+                  const total     = matched + unmatched;
+                  return (
+                    <div
+                      key={i}
+                      onClick={() => setLightboxIdx(i)}
+                      style={{
+                        position: "relative",
+                        cursor: "zoom-in",
+                        borderTop: i > 0 ? "1px solid var(--border)" : undefined,
+                      }}
+                    >
+                      <AnnotatedPhoto src={src} annotations={annotations} />
+
+                      {/* Face count overlay — bottom left */}
+                      <div style={{
+                        position: "absolute", bottom: 10, left: 10,
+                        display: "flex", gap: 6, alignItems: "center",
+                      }}>
+                        {total > 0 && (
+                          <div style={{
+                            background: "rgba(0,0,0,0.78)", backdropFilter: "blur(6px)",
+                            borderRadius: 99, padding: "4px 12px",
+                            fontSize: 12, fontWeight: 700,
+                            display: "flex", gap: 10,
+                          }}>
+                            <span style={{ color: "#22d37a" }}>✓ {matched} matched</span>
+                            {unmatched > 0 && <span style={{ color: "#ff453a" }}>✗ {unmatched} unknown</span>}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Zoom hint */}
+                      <div style={{
+                        position: "absolute", bottom: 10, right: 10,
+                        background: "rgba(0,0,0,0.65)", backdropFilter: "blur(4px)",
+                        borderRadius: "50%", width: 32, height: 32,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                      }}>
+                        <ZoomIn size={16} color="#fff" />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
-          {/* ── ANNOTATED PHOTO VIEWER ─────────────────────────────── */}
-          {aiResult.image_previews.length > 0 && (
-            <div className="card" style={{ marginBottom: 14, padding: 0, overflow: "hidden" }}>
-              <div style={{ padding: "12px 14px 10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.8 }}>
-                  📸 Tap photo to enlarge
-                </div>
-                <div style={{ display: "flex", gap: 12, fontSize: 11, fontWeight: 700 }}>
-                  <span style={{ display: "flex", alignItems: "center", gap: 5, color: "#22d37a" }}>
-                    <span style={{ width: 10, height: 10, border: "2px solid #22d37a", display: "inline-block", borderRadius: 1 }} />
-                    Matched
-                  </span>
-                  <span style={{ display: "flex", alignItems: "center", gap: 5, color: "#ff453a" }}>
-                    <span style={{ width: 10, height: 10, border: "2px solid #ff453a", display: "inline-block", borderRadius: 1 }} />
-                    Unmatched
-                  </span>
-                </div>
+          <div className="step3-right-col" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {/* Student list */}
+            <div className="card" style={{ margin: 0 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 12 }}>
+                Review — tap to toggle
               </div>
-
-              {/* Photos — show first photo full width, rest as strip */}
-              {aiResult.image_previews.map((src, i) => {
-                const annotations = aiResult.image_annotations?.[i] ?? [];
-                const matched   = annotations.filter(a => a.matched).length;
-                const unmatched = annotations.filter(a => !a.matched).length;
-                const total     = matched + unmatched;
+              {aiResult.detection_results.map(d => {
+                const isPresent = overrides[d.student_id] ?? (d.status === "present");
+                const wasChanged = overrides[d.student_id] !== undefined && overrides[d.student_id] !== (d.status === "present");
                 return (
                   <div
-                    key={i}
-                    onClick={() => setLightboxIdx(i)}
-                    style={{
-                      position: "relative",
-                      cursor: "zoom-in",
-                      borderTop: i > 0 ? "1px solid var(--border)" : undefined,
-                    }}
+                    key={d.student_id}
+                    onClick={() => setOverrides(o => ({ ...o, [d.student_id]: !isPresent }))}
+                    style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: "1px solid var(--border)", cursor: "pointer" }}
                   >
-                    <AnnotatedPhoto src={src} annotations={annotations} />
-
-                    {/* Face count overlay — bottom left */}
-                    <div style={{
-                      position: "absolute", bottom: 10, left: 10,
-                      display: "flex", gap: 6, alignItems: "center",
-                    }}>
-                      {total > 0 && (
-                        <div style={{
-                          background: "rgba(0,0,0,0.78)", backdropFilter: "blur(6px)",
-                          borderRadius: 99, padding: "4px 12px",
-                          fontSize: 12, fontWeight: 700,
-                          display: "flex", gap: 10,
-                        }}>
-                          <span style={{ color: "#22d37a" }}>✓ {matched} matched</span>
-                          {unmatched > 0 && <span style={{ color: "#ff453a" }}>✗ {unmatched} unknown</span>}
-                        </div>
-                      )}
+                    <div style={{ width: 36, height: 36, borderRadius: "50%", flexShrink: 0, background: isPresent ? "rgba(34,211,122,0.12)" : "rgba(240,90,90,0.10)", color: isPresent ? "#22d37a" : "var(--danger)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 14 }}>
+                      {d.student_name[0].toUpperCase()}
                     </div>
-
-                    {/* Zoom hint */}
-                    <div style={{
-                      position: "absolute", bottom: 10, right: 10,
-                      background: "rgba(0,0,0,0.65)", backdropFilter: "blur(4px)",
-                      borderRadius: "50%", width: 32, height: 32,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                    }}>
-                      <ZoomIn size={16} color="#fff" />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                        {d.student_name}
+                        {wasChanged && <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 99, background: "rgba(245,200,66,0.15)", color: "#f5c842", fontWeight: 700 }}>EDITED</span>}
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 1 }}>
+                        {d.roll_no} · {Math.round((d.confidence ?? 0) * 100)}% confidence
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: isPresent ? "#22d37a" : "var(--danger)" }}>
+                        {isPresent ? "Present" : "Absent"}
+                      </span>
+                      {isPresent ? <ToggleRight size={22} style={{ color: "#22d37a" }} /> : <ToggleLeft size={22} style={{ color: "var(--text-muted)" }} />}
                     </div>
                   </div>
                 );
               })}
             </div>
-          )}
 
-          {/* Student list */}
-          <div className="card" style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 12 }}>
-              Review — tap to toggle
+            {/* Finalize button — photo viewer disappears after this */}
+            <button
+              onClick={finalize}
+              disabled={finalizing}
+              style={{
+                width: "100%", padding: "16px", borderRadius: 16,
+                background: finalizing ? "var(--bg-card-2)" : "#22d37a",
+                color: finalizing ? "var(--text-muted)" : "#fff",
+                fontWeight: 800, fontSize: 16, border: "none",
+                cursor: finalizing ? "not-allowed" : "pointer",
+                fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+              }}
+            >
+              {finalizing
+                ? <><Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> Finalizing…</>
+                : <><Check size={18} /> Submit Attendance ({presentCount} present)</>}
+            </button>
+            <div style={{ textAlign: "center", marginTop: 8, fontSize: 11, color: "var(--text-muted)" }}>
+              Tap any student to toggle. Photo annotations will clear after Submit.
             </div>
-            {aiResult.detection_results.map(d => {
-              const isPresent = overrides[d.student_id] ?? (d.status === "present");
-              const wasChanged = overrides[d.student_id] !== undefined && overrides[d.student_id] !== (d.status === "present");
-              return (
-                <div
-                  key={d.student_id}
-                  onClick={() => setOverrides(o => ({ ...o, [d.student_id]: !isPresent }))}
-                  style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: "1px solid var(--border)", cursor: "pointer" }}
-                >
-                  <div style={{ width: 36, height: 36, borderRadius: "50%", flexShrink: 0, background: isPresent ? "rgba(34,211,122,0.12)" : "rgba(240,90,90,0.10)", color: isPresent ? "#22d37a" : "var(--danger)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 14 }}>
-                    {d.student_name[0].toUpperCase()}
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
-                      {d.student_name}
-                      {wasChanged && <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 99, background: "rgba(245,200,66,0.15)", color: "#f5c842", fontWeight: 700 }}>EDITED</span>}
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 1 }}>
-                      {d.roll_no} · {Math.round((d.confidence ?? 0) * 100)}% confidence
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: isPresent ? "#22d37a" : "var(--danger)" }}>
-                      {isPresent ? "Present" : "Absent"}
-                    </span>
-                    {isPresent ? <ToggleRight size={22} style={{ color: "#22d37a" }} /> : <ToggleLeft size={22} style={{ color: "var(--text-muted)" }} />}
-                  </div>
-                </div>
-              );
-            })}
           </div>
-
-          {/* Finalize button — photo viewer disappears after this */}
-          <button
-            onClick={finalize}
-            disabled={finalizing}
-            style={{
-              width: "100%", padding: "16px", borderRadius: 16,
-              background: finalizing ? "var(--bg-card-2)" : "#22d37a",
-              color: finalizing ? "var(--text-muted)" : "#fff",
-              fontWeight: 800, fontSize: 16, border: "none",
-              cursor: finalizing ? "not-allowed" : "pointer",
-              fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-            }}
-          >
-            {finalizing
-              ? <><Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> Finalizing…</>
-              : <><Check size={18} /> Submit Attendance ({presentCount} present)</>}
-          </button>
-          <div style={{ textAlign: "center", marginTop: 8, fontSize: 11, color: "var(--text-muted)" }}>
-            Tap any student to toggle. Photo annotations will clear after Submit.
-          </div>
-        </>
+        </div>
       )}
 
       {/* Camera modal */}
