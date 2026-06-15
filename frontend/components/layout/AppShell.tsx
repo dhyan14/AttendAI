@@ -20,11 +20,7 @@ interface NavItem {
 
 /* ─── Nav Configs ────────────────────────────────────────── */
 const superAdminNav: NavItem[] = [
-  { href: "/super/dashboard", label: "Dashboard",    icon: <Globe size={20} /> },
-  { href: "/super/orgs",      label: "Organizations",icon: <Building2 size={20} /> },
-  { href: "/super/users",     label: "User Mgmt",    icon: <UserCog size={20} /> },
-  { href: "/super/audit",     label: "Audit Logs",   icon: <Activity size={20} /> },
-  { href: "/super/settings",  label: "Settings",     icon: <Settings size={20} /> },
+  { href: "/super/dashboard", label: "Dashboard",     icon: <Globe size={20} /> },
 ];
 
 const orgAdminNav: NavItem[] = [
@@ -86,12 +82,8 @@ function getNav(role: AppRole): NavItem[] {
 function getBottomNav(role: AppRole): NavItem[] {
   switch (role) {
     case "super_admin":
-      return [
-        { href: "/super/dashboard", label: "Dashboard", icon: <Globe size={22} /> },
-        { href: "/super/orgs",      label: "Orgs",      icon: <Building2 size={22} /> },
-        { href: "/super/users",     label: "Users",     icon: <UserCog size={22} /> },
-        { href: "/super/settings",  label: "Settings",  icon: <Settings size={22} /> },
-      ];
+      // Super admin dashboard has its own internal bottom nav for section switching
+      return [];
     case "org_admin":
       return [
         { href: "/admin/dashboard",   label: "Home",    icon: <Home size={22} /> },
@@ -285,8 +277,8 @@ export default function AppShell({ children, role }: AppShellProps) {
         {children}
       </main>
 
-      {/* Bottom Nav — visible on mobile */}
-      <BottomNavBar role={role} />
+      {/* Bottom Nav — visible on mobile, not needed for super_admin (dashboard has its own) */}
+      {role !== "super_admin" && <BottomNavBar role={role} />}
     </div>
   );
 }
