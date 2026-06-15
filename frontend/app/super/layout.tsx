@@ -4,14 +4,14 @@ import { useRouter } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import { Loader2 } from "lucide-react";
 
-export default function FacultyLayout({ children }: { children: React.ReactNode }) {
+export default function SuperLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     const role = localStorage.getItem("user_role");
     const token = localStorage.getItem("access_token");
-    if (!token || !["faculty", "dept_admin", "org_admin", "super_admin"].includes(role ?? "")) {
+    if (!token || role !== "super_admin") {
       router.replace("/login");
     } else {
       setReady(true);
@@ -27,5 +27,5 @@ export default function FacultyLayout({ children }: { children: React.ReactNode 
     );
   }
 
-  return <AppShell role="faculty">{children}</AppShell>;
+  return <AppShell role="super_admin">{children}</AppShell>;
 }

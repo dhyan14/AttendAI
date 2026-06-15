@@ -37,9 +37,7 @@ export default function RootLayout({
         <link rel="apple-touch-icon" href="/icons/icon-192.png" />
       </head>
       <body>
-        <div className="mobile-frame">
-          {children}
-        </div>
+        {children}
       </body>
     </html>
   );

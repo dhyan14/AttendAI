@@ -30,6 +30,7 @@ export default function LoginPage() {
       localStorage.setItem("refresh_token", data.refresh_token);
       localStorage.setItem("user_role", data.role);
       localStorage.setItem("user_id", data.user_id);
+      localStorage.setItem("user_email", email);
       // Cookie so Next.js edge middleware can read role for server-side redirects
       document.cookie = `user_role=${data.role}; path=/; max-age=2592000; SameSite=Lax`;
 
@@ -53,10 +54,13 @@ export default function LoginPage() {
       minHeight: "100dvh",
       display: "flex",
       flexDirection: "column",
+      alignItems: "center",
+      justifyContent: "center",
       background: "var(--bg)",
       position: "relative",
       overflow: "hidden",
     }}>
+      <div style={{ width: "100%", maxWidth: 480, padding: "20px" }}>
       {/* Ambient glow blobs */}
       <div style={{
         position: "absolute", top: -100, left: -100,
@@ -218,10 +222,10 @@ export default function LoginPage() {
           </div>
         </div>
       </div>
-
-      <p style={{ textAlign: "center", padding: "0 0 24px", fontSize: 11, color: "var(--text-muted)" }}>
+      <p style={{ textAlign: "center", padding: "16px 0 8px", fontSize: 11, color: "var(--text-muted)" }}>
         Powered by Youdex AttendAI · v1.0
       </p>
+      </div>
 
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>

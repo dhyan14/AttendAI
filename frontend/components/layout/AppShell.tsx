@@ -1,0 +1,292 @@
+"use client";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import {
+  Home, Users, User, Building2, FileText, Camera, BookOpen,
+  Calendar, BarChart3, Shield, Globe, Settings, LogOut,
+  AlertTriangle, Loader2, GraduationCap, UserCog, Lock, Activity,
+} from "lucide-react";
+
+/* ─── Types ─────────────────────────────────────────────── */
+export type AppRole = "super_admin" | "org_admin" | "dept_admin" | "faculty" | "student";
+
+interface NavItem {
+  href: string;
+  label: string;
+  icon: React.ReactNode;
+  fab?: boolean; // highlight as primary action
+}
+
+/* ─── Nav Configs ────────────────────────────────────────── */
+const superAdminNav: NavItem[] = [
+  { href: "/super/dashboard", label: "Dashboard",    icon: <Globe size={20} /> },
+  { href: "/super/orgs",      label: "Organizations",icon: <Building2 size={20} /> },
+  { href: "/super/users",     label: "User Mgmt",    icon: <UserCog size={20} /> },
+  { href: "/super/audit",     label: "Audit Logs",   icon: <Activity size={20} /> },
+  { href: "/super/settings",  label: "Settings",     icon: <Settings size={20} /> },
+];
+
+const orgAdminNav: NavItem[] = [
+  { href: "/admin/dashboard",   label: "Dashboard",   icon: <Home size={20} /> },
+  { href: "/admin/departments", label: "Departments", icon: <Building2 size={20} /> },
+  { href: "/admin/students",    label: "Students",    icon: <Users size={20} /> },
+  { href: "/admin/faculty",     label: "Faculty",     icon: <UserCog size={20} /> },
+  { href: "/admin/subjects",    label: "Subjects",    icon: <BookOpen size={20} /> },
+  { href: "/admin/reports",     label: "Reports",     icon: <BarChart3 size={20} /> },
+  { href: "/admin/disputes",    label: "Disputes",    icon: <AlertTriangle size={20} /> },
+];
+
+const deptAdminNav: NavItem[] = [
+  { href: "/admin/dashboard",    label: "Dashboard",  icon: <Home size={20} /> },
+  { href: "/admin/students",     label: "Students",   icon: <GraduationCap size={20} /> },
+  { href: "/admin/faculty",      label: "Faculty",    icon: <UserCog size={20} /> },
+  { href: "/admin/subjects",     label: "Subjects",   icon: <BookOpen size={20} /> },
+  { href: "/admin/face-register",label: "Faces",      icon: <Camera size={20} /> },
+  { href: "/admin/attendance",   label: "Attendance", icon: <Calendar size={20} /> },
+  { href: "/admin/reports",      label: "Reports",    icon: <BarChart3 size={20} /> },
+  { href: "/admin/disputes",     label: "Disputes",   icon: <AlertTriangle size={20} /> },
+];
+
+const facultyNav: NavItem[] = [
+  { href: "/faculty/home",           label: "Home",           icon: <Home size={20} /> },
+  { href: "/faculty/attendance/take",label: "Take Attendance",icon: <Camera size={20} />, fab: true },
+  { href: "/faculty/attendance",     label: "Sessions",       icon: <Calendar size={20} /> },
+  { href: "/faculty/students",       label: "Students",       icon: <Users size={20} /> },
+  { href: "/faculty/reports",        label: "Reports",        icon: <BarChart3 size={20} /> },
+  { href: "/faculty/profile",        label: "Profile",        icon: <User size={20} /> },
+];
+
+const studentNav: NavItem[] = [
+  { href: "/student/home",       label: "Home",       icon: <Home size={20} /> },
+  { href: "/student/attendance", label: "Attendance", icon: <Calendar size={20} /> },
+  { href: "/student/disputes",   label: "Disputes",   icon: <AlertTriangle size={20} /> },
+  { href: "/student/profile",    label: "Profile",    icon: <User size={20} /> },
+];
+
+const ROLE_LABEL: Record<AppRole, string> = {
+  super_admin: "Super Admin",
+  org_admin:   "Org Admin",
+  dept_admin:  "Dept Admin",
+  faculty:     "Faculty",
+  student:     "Student",
+};
+
+function getNav(role: AppRole): NavItem[] {
+  switch (role) {
+    case "super_admin": return superAdminNav;
+    case "org_admin":   return orgAdminNav;
+    case "dept_admin":  return deptAdminNav;
+    case "faculty":     return facultyNav;
+    case "student":     return studentNav;
+  }
+}
+
+/* ─── Bottom nav items (mobile only, 5 max) ──────────────── */
+function getBottomNav(role: AppRole): NavItem[] {
+  switch (role) {
+    case "super_admin":
+      return [
+        { href: "/super/dashboard", label: "Dashboard", icon: <Globe size={22} /> },
+        { href: "/super/orgs",      label: "Orgs",      icon: <Building2 size={22} /> },
+        { href: "/super/users",     label: "Users",     icon: <UserCog size={22} /> },
+        { href: "/super/settings",  label: "Settings",  icon: <Settings size={22} /> },
+      ];
+    case "org_admin":
+      return [
+        { href: "/admin/dashboard",   label: "Home",    icon: <Home size={22} /> },
+        { href: "/admin/departments", label: "Depts",   icon: <Building2 size={22} /> },
+        { href: "/admin/reports",     label: "Reports", icon: <BarChart3 size={22} /> },
+        { href: "/admin/disputes",    label: "Issues",  icon: <AlertTriangle size={22} /> },
+      ];
+    case "dept_admin":
+      return [
+        { href: "/admin/dashboard",    label: "Home",     icon: <Home size={22} /> },
+        { href: "/admin/students",     label: "Students", icon: <Users size={22} /> },
+        { href: "/admin/face-register",label: "Faces",    icon: <Camera size={22} /> },
+        { href: "/admin/attendance",   label: "Attend.",  icon: <Calendar size={22} /> },
+        { href: "/admin/reports",      label: "Reports",  icon: <BarChart3 size={22} /> },
+      ];
+    case "faculty":
+      return [
+        { href: "/faculty/home",           label: "Home",    icon: <Home size={22} /> },
+        { href: "/faculty/attendance",     label: "Sessions",icon: <Calendar size={22} /> },
+        { href: "/faculty/attendance/take",label: "Attend",  icon: <Camera size={22} />, fab: true },
+        { href: "/faculty/students",       label: "Students",icon: <Users size={22} /> },
+        { href: "/faculty/profile",        label: "Profile", icon: <User size={22} /> },
+      ];
+    case "student":
+      return [
+        { href: "/student/home",       label: "Home",      icon: <Home size={22} /> },
+        { href: "/student/attendance", label: "Attendance",icon: <Calendar size={22} /> },
+        { href: "/student/disputes",   label: "Disputes",  icon: <AlertTriangle size={22} /> },
+        { href: "/student/profile",    label: "Profile",   icon: <User size={22} /> },
+      ];
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SIDEBAR COMPONENT (PC)
+   ═══════════════════════════════════════════════════════════ */
+function Sidebar({
+  role, email, onLogout,
+}: {
+  role: AppRole; email: string; onLogout: () => void;
+}) {
+  const pathname = usePathname();
+  const navItems = getNav(role);
+  const initial = email?.[0]?.toUpperCase() ?? "?";
+
+  return (
+    <aside className="app-sidebar">
+      {/* Brand */}
+      <div className="sidebar-brand">
+        <div className="sidebar-brand-icon">
+          <Camera size={20} color="white" />
+        </div>
+        <div>
+          <div className="sidebar-brand-text">AttendAI</div>
+          <div className="sidebar-brand-sub">by Youdex</div>
+        </div>
+      </div>
+
+      {/* Role badge */}
+      <div style={{ padding: "8px 20px 4px" }}>
+        <span style={{
+          fontSize: 10, fontWeight: 700, color: "var(--accent-2)",
+          background: "var(--accent-dim)", padding: "3px 10px",
+          borderRadius: 99, letterSpacing: 0.5,
+        }}>
+          {ROLE_LABEL[role]}
+        </span>
+      </div>
+
+      {/* Nav items */}
+      <nav className="sidebar-nav">
+        {navItems.map((item) => {
+          const isActive = item.href === "/super/dashboard"
+            ? pathname === item.href || pathname.startsWith("/super/dashboard")
+            : pathname.startsWith(item.href) &&
+              !(item.href === "/faculty/attendance" && pathname === "/faculty/attendance/take");
+
+          if (item.fab) {
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="sidebar-fab"
+              >
+                {item.icon}
+                {item.label}
+              </Link>
+            );
+          }
+
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`sidebar-nav-item${isActive ? " active" : ""}`}
+            >
+              <span className="nav-icon">{item.icon}</span>
+              {item.label}
+            </Link>
+          );
+        })}
+      </nav>
+
+      {/* Footer */}
+      <div className="sidebar-footer">
+        <div className="sidebar-user-card">
+          <div className="sidebar-avatar">{initial}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="sidebar-user-name">{email || "User"}</div>
+            <div className="sidebar-user-role">{ROLE_LABEL[role]}</div>
+          </div>
+        </div>
+        <button className="sidebar-logout" onClick={onLogout}>
+          <LogOut size={15} />
+          Sign out
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   BOTTOM NAV (MOBILE)
+   ═══════════════════════════════════════════════════════════ */
+function BottomNavBar({ role }: { role: AppRole }) {
+  const pathname = usePathname();
+  const items = getBottomNav(role);
+
+  return (
+    <nav className="bottom-nav">
+      {items.map((item) => {
+        const isActive = pathname.startsWith(item.href) &&
+          !(item.href === "/faculty/attendance" && pathname === "/faculty/attendance/take");
+
+        if (item.fab) {
+          return (
+            <div key={item.href} className="nav-item-center">
+              <Link href={item.href} className="nav-fab">
+                {item.icon}
+              </Link>
+              <span>{item.label}</span>
+            </div>
+          );
+        }
+
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            className={`nav-item${isActive ? " active" : ""}`}
+          >
+            {item.icon}
+            <span>{item.label}</span>
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   APP SHELL — MAIN EXPORT
+   ═══════════════════════════════════════════════════════════ */
+interface AppShellProps {
+  children: React.ReactNode;
+  role: AppRole;
+}
+
+export default function AppShell({ children, role }: AppShellProps) {
+  const router = useRouter();
+  const [email, setEmail] = useState("");
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setEmail(localStorage.getItem("user_email") || "");
+    }
+  }, []);
+
+  const handleLogout = () => {
+    localStorage.clear();
+    router.replace("/login");
+  };
+
+  return (
+    <div className="app-shell">
+      {/* Sidebar — visible on PC */}
+      <Sidebar role={role} email={email} onLogout={handleLogout} />
+
+      {/* Main content */}
+      <main className="app-main">
+        {children}
+      </main>
+
+      {/* Bottom Nav — visible on mobile */}
+      <BottomNavBar role={role} />
+    </div>
+  );
+}
