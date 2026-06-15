@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import {
   Globe, Users, Building2, Shield, Activity, LogOut, Settings,
@@ -165,6 +165,14 @@ export default function SuperDashboard() {
   const [topSection, setTopSection]       = useState<TopSection>("overview");
   const [selectedOrg, setSelectedOrg]     = useState<OrgDetail | null>(null);
   const [orgTab, setOrgTab]               = useState<OrgTab>("departments");
+
+  // Sync URL ?s= param → topSection
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    const s = searchParams.get("s") as TopSection | null;
+    const valid: TopSection[] = ["overview", "orgs", "users", "settings"];
+    setTopSection(s && valid.includes(s) ? s : "overview");
+  }, [searchParams]);
 
   // Dept drill-down
   const [selectedDept, setSelectedDept]   = useState<DeptRow | null>(null);
@@ -1195,15 +1203,10 @@ export default function SuperDashboard() {
   /* ═══════════════════════════════════════════════════════════
      TOP-LEVEL VIEW (Home / Orgs / Users / Settings)
      ═══════════════════════════════════════════════════════════ */
-  const topNav = [
-    { id: "overview" as TopSection, icon: <Activity size={20} />,  label: "Home" },
-    { id: "orgs"     as TopSection, icon: <Globe size={20} />,     label: "Orgs" },
-    { id: "users"    as TopSection, icon: <Users size={20} />,     label: "Users" },
-    { id: "settings" as TopSection, icon: <Settings size={20} />,  label: "Settings" },
-  ];
+
 
   return (
-    <div style={{ minHeight: "100dvh", background: "var(--bg)", paddingBottom: 88 }}>
+    <div style={{ minHeight: "100dvh", background: "var(--bg)", paddingBottom: 24 }}>
       <Toast msg={toast} />
 
       {/* Header */}
@@ -1426,31 +1429,6 @@ export default function SuperDashboard() {
         )}
       </div>
 
-      {/* Bottom Nav */}
-      <div style={{
-        position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)",
-        background: "rgba(8,7,15,0.97)", backdropFilter: "blur(20px)",
-        borderTop: "1px solid var(--border)",
-        display: "flex", padding: "10px 0 22px",
-        maxWidth: 430, width: "100%",
-      }}>
-        {topNav.map(n => (
-          <button
-            key={n.id}
-            onClick={() => setTopSection(n.id)}
-            style={{
-              flex: 1, background: "none", border: "none", cursor: "pointer",
-              display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
-              color: topSection === n.id ? "#ff9f0a" : "var(--text-muted)",
-              transition: "color 0.15s", fontFamily: "inherit", padding: "4px 0",
-            }}
-          >
-            {n.icon}
-            <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>{n.label}</span>
-            {topSection === n.id && <span style={{ width: 4, height: 4, borderRadius: "50%", background: "#ff9f0a" }} />}
-          </button>
-        ))}
-      </div>
 
       {/* Create Org modal (top-level) */}
       {modal === "org" && (
