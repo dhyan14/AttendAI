@@ -972,7 +972,7 @@ export default function SuperDashboard() {
                 </div>
                 <button
                   onClick={async () => {
-                    const token = localStorage.getItem("token");
+                    const token = localStorage.getItem("access_token");
                     const r = await fetch(
                       `${process.env.NEXT_PUBLIC_API_URL || "https://attendai-production-f6cf.up.railway.app"}/admin/students/template`,
                       { headers: { Authorization: `Bearer ${token}` } }
@@ -1049,7 +1049,7 @@ export default function SuperDashboard() {
                   if (!bulkFile) return;
                   setBulkUploading(true);
                   try {
-                    const token = localStorage.getItem("token");
+                    const token = localStorage.getItem("access_token");
                     const form = new FormData();
                     form.append("file", bulkFile);
                     const r = await fetch(
