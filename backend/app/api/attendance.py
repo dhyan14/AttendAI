@@ -417,46 +417,54 @@ async def take_attendance_ai(
             if not raw:
                 continue
 
-            # HIGH QUALITY preview — 960px wide, quality=85 (was 480px/60q)
+            # HIGH QUALITY preview — 960px wide, quality=85
+            # CRITICAL: record original dims BEFORE resize so we can scale bboxes
+            scale_x = 1.0
+            scale_y = 1.0
             try:
                 from PIL import Image as PILImage
                 import io as _io
                 img_pil = PILImage.open(_io.BytesIO(raw)).convert("RGB")
-                # Resize to max 960px wide keeping aspect ratio
+                orig_w_px = img_pil.width
+                orig_h_px = img_pil.height
+
                 max_w = 960
                 if img_pil.width > max_w:
                     ratio = max_w / img_pil.width
-                    img_pil = img_pil.resize(
-                        (max_w, int(img_pil.height * ratio)),
-                        PILImage.LANCZOS
-                    )
+                    new_w = max_w
+                    new_h = int(img_pil.height * ratio)
+                    img_pil = img_pil.resize((new_w, new_h), PILImage.LANCZOS)
+                    # Scale factor: bbox coords (original) → preview coords
+                    scale_x = new_w / orig_w_px
+                    scale_y = new_h / orig_h_px
+
                 buf = _io.BytesIO()
-                img_pil.save(buf, format="JPEG", quality=85)
+                img_pil.save(buf, format="JPEG", quality=88)
                 b64 = base64.b64encode(buf.getvalue()).decode()
                 image_previews.append(f"data:image/jpeg;base64,{b64}")
-                # Store scale factor so bboxes can be mapped to preview coords
-                orig_w = img_pil.width   # already resized
-            except Exception:
-                orig_w = None
+            except Exception as img_err:
+                print(f"[AI] Preview generation error: {img_err}")
 
-            # Run face detection + recognition
+            # Run face detection + recognition on ORIGINAL raw bytes
             face_boxes: list[dict] = []
             try:
                 probe_raw = face_service.get_embeddings(raw)   # [(bbox, embedding), ...]
-                probe_vecs = [emb for (_bbox, emb) in probe_raw]
-                probe_bboxes = [bbox for (bbox, _emb) in probe_raw]
-                matches = face_service.match_faces(probe_vecs, stored_list, threshold=0.40)
-
-                # Build a map: probe_index → matched student
-                # match_faces returns matches indexed by stored_list order — we need
-                # to re-run per-face to get the bbox→student mapping
-                # Re-do matching per face to get face→student association
+                # bbox coords are in ORIGINAL image space — scale to preview space
                 from app.services.face_service import MATCH_THRESHOLD
                 import numpy as np
                 stored_vecs_arr = np.array([s["embedding"] for s in stored_list], dtype=np.float32)
                 stored_vecs_arr /= (np.linalg.norm(stored_vecs_arr, axis=1, keepdims=True) + 1e-8)
 
-                for p_idx, (bbox, probe_emb) in enumerate(probe_raw):
+                for (bbox_orig, probe_emb) in probe_raw:
+                    # Scale bbox from original pixel space → preview pixel space
+                    x1, y1, x2, y2 = bbox_orig
+                    scaled_bbox = [
+                        round(x1 * scale_x, 1),
+                        round(y1 * scale_y, 1),
+                        round(x2 * scale_x, 1),
+                        round(y2 * scale_y, 1),
+                    ]
+
                     probe_vec = np.array(probe_emb, dtype=np.float32)
                     probe_vec /= (np.linalg.norm(probe_vec) + 1e-8)
                     sims = stored_vecs_arr @ probe_vec
@@ -465,7 +473,6 @@ async def take_attendance_ai(
 
                     if best_sim >= MATCH_THRESHOLD:
                         sid = stored_list[best_idx]["student_id"]
-                        # Find student name/roll from rec_rows
                         matched_row = next(
                             (r for r in rec_rows if str(r.AttendanceRecord.student_id) == sid),
                             None
@@ -474,7 +481,7 @@ async def take_attendance_ai(
                             ai_confidences[sid] = round(best_sim, 4)
                             detected_student_ids.add(sid)
                         face_boxes.append({
-                            "bbox": bbox,          # [x1,y1,x2,y2] in original image coords
+                            "bbox": scaled_bbox,   # in PREVIEW image coords
                             "matched": True,
                             "student_id": sid,
                             "student_name": matched_row.student_name if matched_row else "Unknown",
@@ -483,7 +490,7 @@ async def take_attendance_ai(
                         })
                     else:
                         face_boxes.append({
-                            "bbox": bbox,
+                            "bbox": scaled_bbox,   # in PREVIEW image coords
                             "matched": False,
                             "student_id": None,
                             "student_name": None,

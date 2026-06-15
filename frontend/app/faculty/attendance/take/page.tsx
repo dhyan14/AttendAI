@@ -70,7 +70,7 @@ function Toast({ msg }: { msg: string }) {
 }
 
 // ─── Annotated Photo Canvas ─────────────────────────────────
-// Draws the classroom photo with green/red bounding boxes on a canvas
+// Draws classroom photo with green/red bounding boxes directly on faces
 function AnnotatedPhoto({
   src,
   annotations,
@@ -81,137 +81,161 @@ function AnnotatedPhoto({
   onClose?: () => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const imgRef = useRef<HTMLImageElement | null>(null);
 
-  const draw = useCallback(() => {
+  useEffect(() => {
+    if (!src) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
-    if (!ctx || !imgRef.current) return;
+    if (!ctx) return;
 
-    const img = imgRef.current;
-    canvas.width  = img.naturalWidth;
-    canvas.height = img.naturalHeight;
+    const img = new window.Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      // Canvas size = image natural size (so bbox coords map 1:1)
+      canvas.width  = img.naturalWidth;
+      canvas.height = img.naturalHeight;
 
-    ctx.drawImage(img, 0, 0);
+      // Draw the photo
+      ctx.drawImage(img, 0, 0);
 
-    const scaleX = img.naturalWidth;
-    const scaleY = img.naturalHeight;
+      if (!annotations || annotations.length === 0) return;
 
-    for (const face of annotations) {
-      const [x1, y1, x2, y2] = face.bbox;
-      const w = x2 - x1;
-      const h = y2 - y1;
+      const W = img.naturalWidth;
+      const H = img.naturalHeight;
 
-      const color = face.matched ? "#22d37a" : "#ff453a";
-      const lineW = Math.max(2, Math.round(scaleX / 250));
+      for (const face of annotations) {
+        const [x1, y1, x2, y2] = face.bbox;
+        const bw = x2 - x1;
+        const bh = y2 - y1;
+        if (bw <= 0 || bh <= 0) continue;
 
-      // Shadow for visibility on any background
-      ctx.shadowColor = "rgba(0,0,0,0.8)";
-      ctx.shadowBlur = 4;
+        const color  = face.matched ? "#22d37a" : "#ff453a";
+        const lineW  = Math.max(3, Math.round(W / 200));  // scales with image size
+        const corner = Math.min(bw, bh) * 0.28;
 
-      // Bounding box
-      ctx.strokeStyle = color;
-      ctx.lineWidth = lineW;
-      ctx.strokeRect(x1, y1, w, h);
+        // ── Thin full rectangle ─────────────────────────────────
+        ctx.strokeStyle = color;
+        ctx.lineWidth = lineW;
+        ctx.globalAlpha = 0.75;
+        ctx.strokeRect(x1, y1, bw, bh);
+        ctx.globalAlpha = 1.0;
 
-      // Corner brackets (thicker) for premium look
-      const corner = Math.min(w, h) * 0.25;
-      ctx.lineWidth = lineW * 2;
-      ctx.beginPath();
-      // TL
-      ctx.moveTo(x1, y1 + corner); ctx.lineTo(x1, y1); ctx.lineTo(x1 + corner, y1);
-      // TR
-      ctx.moveTo(x2 - corner, y1); ctx.lineTo(x2, y1); ctx.lineTo(x2, y1 + corner);
-      // BR
-      ctx.moveTo(x2, y2 - corner); ctx.lineTo(x2, y2); ctx.lineTo(x2 - corner, y2);
-      // BL
-      ctx.moveTo(x1 + corner, y2); ctx.lineTo(x1, y2); ctx.lineTo(x1, y2 - corner);
-      ctx.stroke();
+        // ── Bold corner brackets ────────────────────────────────
+        ctx.shadowColor = "rgba(0,0,0,0.9)";
+        ctx.shadowBlur = 6;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = lineW * 2.5;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.beginPath();
+        // Top-Left
+        ctx.moveTo(x1, y1 + corner); ctx.lineTo(x1, y1); ctx.lineTo(x1 + corner, y1);
+        // Top-Right
+        ctx.moveTo(x2 - corner, y1); ctx.lineTo(x2, y1); ctx.lineTo(x2, y1 + corner);
+        // Bottom-Right
+        ctx.moveTo(x2, y2 - corner); ctx.lineTo(x2, y2); ctx.lineTo(x2 - corner, y2);
+        // Bottom-Left
+        ctx.moveTo(x1 + corner, y2); ctx.lineTo(x1, y2); ctx.lineTo(x1, y2 - corner);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
 
-      ctx.shadowBlur = 0;
+        // ── Name label ──────────────────────────────────────────
+        const fontSize = Math.max(14, Math.round(W / 55));
+        ctx.font = `700 ${fontSize}px -apple-system, sans-serif`;
+        const label = face.matched
+          ? `${face.roll_no || face.student_name}  ${Math.round(face.confidence * 100)}%`
+          : `Unknown  ${Math.round(face.confidence * 100)}%`;
+        const tw = ctx.measureText(label).width;
+        const px = 10, py = 6;
+        const tagH = fontSize + py * 2;
+        // Place above box if room, else below
+        const tagY = y1 - tagH - 4 >= 0 ? y1 - tagH - 4 : y2 + 4;
+        const tagX = Math.max(0, Math.min(x1, W - tw - px * 2));
 
-      // Label background
-      const label = face.matched
-        ? `${face.roll_no || face.student_name} (${Math.round(face.confidence * 100)}%)`
-        : `Unknown (${Math.round(face.confidence * 100)}%)`;
-      const fontSize = Math.max(12, Math.round(scaleX / 60));
-      ctx.font = `bold ${fontSize}px sans-serif`;
-      const textW = ctx.measureText(label).width;
-      const padX = 8, padY = 5;
-      const tagH = fontSize + padY * 2;
-      const tagY = y1 - tagH > 0 ? y1 - tagH : y2;
-      const tagX = Math.min(x1, scaleX - textW - padX * 2);
+        // Tag background
+        ctx.shadowColor = "rgba(0,0,0,0.6)";
+        ctx.shadowBlur = 4;
+        ctx.fillStyle = face.matched ? "rgba(34,211,122,0.95)" : "rgba(255,69,58,0.95)";
+        const radius = 6;
+        ctx.beginPath();
+        ctx.roundRect(tagX, tagY, tw + px * 2, tagH, radius);
+        ctx.fill();
+        ctx.shadowBlur = 0;
 
-      ctx.fillStyle = face.matched ? "rgba(34,211,122,0.92)" : "rgba(255,69,58,0.92)";
-      ctx.beginPath();
-      ctx.roundRect(tagX, tagY, textW + padX * 2, tagH, 4);
-      ctx.fill();
-
-      ctx.fillStyle = "#fff";
-      ctx.fillText(label, tagX + padX, tagY + padY + fontSize * 0.85);
-    }
-  }, [annotations]);
-
-  useEffect(() => {
-    const img = new Image();
-    img.onload = () => { imgRef.current = img; draw(); };
+        // Tag text
+        ctx.fillStyle = "#ffffff";
+        ctx.font = `700 ${fontSize}px -apple-system, sans-serif`;
+        ctx.fillText(label, tagX + px, tagY + py + fontSize * 0.88);
+      }
+    };
     img.src = src;
-  }, [src, draw]);
+  }, [src, annotations]);
 
-  const canvasStyle: React.CSSProperties = {
-    width: "100%", height: "100%", objectFit: "contain",
-    borderRadius: onClose ? 0 : 12,
-    display: "block",
-  };
-
+  // ── Fullscreen lightbox mode ───────────────────────────────
   if (onClose) {
-    // Full-screen lightbox mode
     return (
       <div style={{
-        position: "fixed", inset: 0, zIndex: 1000,
-        background: "rgba(0,0,0,0.96)", display: "flex",
-        flexDirection: "column", alignItems: "center", justifyContent: "center",
+        position: "fixed", inset: 0, zIndex: 1100,
+        background: "#000",
+        display: "flex", flexDirection: "column",
+        alignItems: "center", justifyContent: "center",
       }}>
-        <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <canvas ref={canvasRef} style={canvasStyle} />
-          <button
-            onClick={onClose}
-            style={{
-              position: "absolute", top: 16, right: 16,
-              width: 40, height: 40, borderRadius: "50%",
-              background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)",
-              color: "#fff", cursor: "pointer", display: "flex",
-              alignItems: "center", justifyContent: "center",
-            }}
-          >
-            <X size={20} />
-          </button>
+        {/* Close */}
+        <button
+          onClick={onClose}
+          style={{
+            position: "absolute", top: 16, right: 16, zIndex: 10,
+            width: 44, height: 44, borderRadius: "50%",
+            background: "rgba(255,255,255,0.15)",
+            border: "1.5px solid rgba(255,255,255,0.3)",
+            color: "#fff", cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            backdropFilter: "blur(8px)",
+          }}
+        >
+          <X size={22} />
+        </button>
 
-          {/* Legend */}
-          <div style={{
-            position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)",
-            display: "flex", gap: 16, background: "rgba(0,0,0,0.7)",
-            padding: "8px 18px", borderRadius: 99, backdropFilter: "blur(10px)",
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#22d37a" }}>
-              <div style={{ width: 12, height: 12, border: "2px solid #22d37a", borderRadius: 2 }} />
-              Matched
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#ff453a" }}>
-              <div style={{ width: 12, height: 12, border: "2px solid #ff453a", borderRadius: 2 }} />
-              Unmatched
-            </div>
+        {/* Annotated canvas — fills screen */}
+        <canvas
+          ref={canvasRef}
+          style={{
+            maxWidth: "100vw", maxHeight: "100dvh",
+            objectFit: "contain", display: "block",
+          }}
+        />
+
+        {/* Legend */}
+        <div style={{
+          position: "absolute", bottom: 24,
+          left: "50%", transform: "translateX(-50%)",
+          display: "flex", gap: 20,
+          background: "rgba(0,0,0,0.75)", backdropFilter: "blur(12px)",
+          padding: "10px 24px", borderRadius: 99,
+          border: "1px solid rgba(255,255,255,0.15)",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: "#22d37a" }}>
+            <div style={{ width: 14, height: 14, border: "2.5px solid #22d37a", borderRadius: 2 }} />
+            Matched
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: "#ff453a" }}>
+            <div style={{ width: 14, height: 14, border: "2.5px solid #ff453a", borderRadius: 2 }} />
+            Unmatched
           </div>
         </div>
       </div>
     );
   }
 
+  // ── Inline thumbnail mode (in the strip) ──────────────────
   return (
     <canvas
       ref={canvasRef}
-      style={{ ...canvasStyle, cursor: "zoom-in", maxHeight: 320 }}
+      style={{
+        width: "100%", display: "block",
+        borderRadius: 0, cursor: "zoom-in",
+      }}
     />
   );
 }
@@ -628,45 +652,68 @@ export default function TakeAttendancePage() {
             <div className="card" style={{ marginBottom: 14, padding: 0, overflow: "hidden" }}>
               <div style={{ padding: "12px 14px 10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.8 }}>
-                  📸 Scanned Photos — Tap to enlarge
+                  📸 Tap photo to enlarge
                 </div>
-                <div style={{ display: "flex", gap: 10, fontSize: 10, fontWeight: 700 }}>
-                  <span style={{ color: "#22d37a" }}>■ Matched</span>
-                  <span style={{ color: "#ff453a" }}>■ Unknown</span>
+                <div style={{ display: "flex", gap: 12, fontSize: 11, fontWeight: 700 }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 5, color: "#22d37a" }}>
+                    <span style={{ width: 10, height: 10, border: "2px solid #22d37a", display: "inline-block", borderRadius: 1 }} />
+                    Matched
+                  </span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 5, color: "#ff453a" }}>
+                    <span style={{ width: 10, height: 10, border: "2px solid #ff453a", display: "inline-block", borderRadius: 1 }} />
+                    Unmatched
+                  </span>
                 </div>
               </div>
 
-              {/* Photo strip with annotated canvases */}
-              <div style={{ display: "flex", gap: 0, overflowX: "auto" }}>
-                {aiResult.image_previews.map((src, i) => {
-                  const annotations = aiResult.image_annotations?.[i] ?? [];
-                  const matched = annotations.filter(a => a.matched).length;
-                  const unmatched = annotations.filter(a => !a.matched).length;
-                  return (
-                    <div
-                      key={i}
-                      onClick={() => setLightboxIdx(i)}
-                      style={{ position: "relative", minWidth: 200, cursor: "zoom-in", borderRight: "1px solid var(--border)" }}
-                    >
-                      <AnnotatedPhoto src={src} annotations={annotations} />
-                      {/* Face count badge */}
-                      <div style={{
-                        position: "absolute", top: 8, left: 8,
-                        background: "rgba(0,0,0,0.75)", backdropFilter: "blur(4px)",
-                        borderRadius: 99, padding: "3px 10px",
-                        display: "flex", gap: 8, alignItems: "center",
-                      }}>
-                        <span style={{ fontSize: 11, fontWeight: 700, color: "#22d37a" }}>✓ {matched}</span>
-                        {unmatched > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: "#ff453a" }}>✗ {unmatched}</span>}
-                      </div>
-                      {/* Zoom icon */}
-                      <div style={{ position: "absolute", bottom: 8, right: 8, background: "rgba(0,0,0,0.6)", borderRadius: "50%", width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <ZoomIn size={14} color="#fff" />
-                      </div>
+              {/* Photos — show first photo full width, rest as strip */}
+              {aiResult.image_previews.map((src, i) => {
+                const annotations = aiResult.image_annotations?.[i] ?? [];
+                const matched   = annotations.filter(a => a.matched).length;
+                const unmatched = annotations.filter(a => !a.matched).length;
+                const total     = matched + unmatched;
+                return (
+                  <div
+                    key={i}
+                    onClick={() => setLightboxIdx(i)}
+                    style={{
+                      position: "relative",
+                      cursor: "zoom-in",
+                      borderTop: i > 0 ? "1px solid var(--border)" : undefined,
+                    }}
+                  >
+                    <AnnotatedPhoto src={src} annotations={annotations} />
+
+                    {/* Face count overlay — bottom left */}
+                    <div style={{
+                      position: "absolute", bottom: 10, left: 10,
+                      display: "flex", gap: 6, alignItems: "center",
+                    }}>
+                      {total > 0 && (
+                        <div style={{
+                          background: "rgba(0,0,0,0.78)", backdropFilter: "blur(6px)",
+                          borderRadius: 99, padding: "4px 12px",
+                          fontSize: 12, fontWeight: 700,
+                          display: "flex", gap: 10,
+                        }}>
+                          <span style={{ color: "#22d37a" }}>✓ {matched} matched</span>
+                          {unmatched > 0 && <span style={{ color: "#ff453a" }}>✗ {unmatched} unknown</span>}
+                        </div>
+                      )}
                     </div>
-                  );
-                })}
-              </div>
+
+                    {/* Zoom hint */}
+                    <div style={{
+                      position: "absolute", bottom: 10, right: 10,
+                      background: "rgba(0,0,0,0.65)", backdropFilter: "blur(4px)",
+                      borderRadius: "50%", width: 32, height: 32,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      <ZoomIn size={16} color="#fff" />
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
 
