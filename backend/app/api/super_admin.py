@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_, delete as sql_delete
 from app.database import get_db
@@ -926,3 +926,116 @@ async def delete_user(
     await db.delete(user)
     await db.commit()
     return {"message": f"User '{email}' deleted"}
+
+
+# ═══════════════════════════════════════════════════════════
+# SUBJECTS (super-admin managed)
+# ═══════════════════════════════════════════════════════════
+
+class SuperSubjectCreate(BaseModel):
+    name: str
+    code: str
+    dept_id: str
+    semester: int
+
+
+@router.get("/subjects")
+async def list_subjects_admin(
+    dept_id: Optional[str] = Query(None),
+    semester: Optional[int] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_super_admin),
+):
+    """List subjects in a department, optionally filtered by semester."""
+    q = select(Subject)
+    if dept_id:
+        try:
+            dept_uuid = uuid.UUID(dept_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid dept_id UUID")
+        q = q.where(Subject.dept_id == dept_uuid)
+    if semester is not None:
+        q = q.where(Subject.semester == semester)
+    q = q.order_by(Subject.semester, Subject.code)
+    res = await db.execute(q)
+    subjects = res.scalars().all()
+    return [
+        {
+            "id": str(s.id),
+            "name": s.name,
+            "code": s.code,
+            "dept_id": str(s.dept_id),
+            "semester": s.semester,
+        }
+        for s in subjects
+    ]
+
+
+@router.post("/subjects")
+async def create_subject_admin(
+    data: SuperSubjectCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_super_admin),
+):
+    """Create a subject inside a department (super admin only)."""
+    try:
+        dept_uuid = uuid.UUID(data.dept_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid dept_id UUID")
+
+    dept = await db.get(Department, dept_uuid)
+    if not dept:
+        raise HTTPException(status_code=404, detail="Department not found")
+
+    existing = await db.execute(
+        select(Subject).where(
+            Subject.dept_id == dept_uuid,
+            Subject.code == data.code.strip().upper(),
+            Subject.semester == data.semester,
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Subject code '{data.code}' already exists in semester {data.semester} of this department",
+        )
+
+    subj = Subject(
+        name=data.name.strip(),
+        code=data.code.strip().upper(),
+        dept_id=dept_uuid,
+        semester=data.semester,
+    )
+    db.add(subj)
+    await db.commit()
+    await db.refresh(subj)
+    return {
+        "id": str(subj.id),
+        "name": subj.name,
+        "code": subj.code,
+        "dept_id": str(subj.dept_id),
+        "semester": subj.semester,
+    }
+
+
+@router.delete("/subjects/{subject_id}")
+async def delete_subject_admin(
+    subject_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_super_admin),
+):
+    """Delete a subject and all its assignments (super admin only)."""
+    try:
+        subj_uuid = uuid.UUID(subject_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid subject_id UUID")
+
+    subj = await db.get(Subject, subj_uuid)
+    if not subj:
+        raise HTTPException(status_code=404, detail="Subject not found")
+
+    name = subj.name
+    await db.execute(sql_delete(SubjectAssignment).where(SubjectAssignment.subject_id == subj_uuid))
+    await db.delete(subj)
+    await db.commit()
+    return {"message": f"Subject '{name}' deleted"}

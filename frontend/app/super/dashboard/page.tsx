@@ -40,10 +40,13 @@ interface UserRow {
   id: string; email: string; role: string; org_name: string;
   org_id: string | null; is_active: boolean; created_at: string;
 }
+interface SubjectRow {
+  id: string; name: string; code: string; dept_id: string; semester: number;
+}
 
 type TopSection = "overview" | "orgs" | "users" | "settings";
 type OrgTab     = "departments" | "faculty" | "students" | "admins";
-type ModalType  = "org" | "dept" | "student" | "faculty" | "admin" | "bulk" | null;
+type ModalType  = "org" | "dept" | "student" | "faculty" | "admin" | "bulk" | "subject" | null;
 
 /* ═══════════════════════════════════════════════════════════
    MICRO COMPONENTS
@@ -163,6 +166,12 @@ export default function SuperDashboard() {
   const [selectedOrg, setSelectedOrg]     = useState<OrgDetail | null>(null);
   const [orgTab, setOrgTab]               = useState<OrgTab>("departments");
 
+  // Dept drill-down
+  const [selectedDept, setSelectedDept]   = useState<DeptRow | null>(null);
+  const [selectedSemester, setSelectedSemester] = useState<number | null>(null);
+  const [subjects, setSubjects]           = useState<SubjectRow[]>([]);
+  const [subjectsLoading, setSubjectsLoading] = useState(false);
+
   // Platform data
   const [stats, setStats]         = useState<PlatformStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
@@ -199,6 +208,8 @@ export default function SuperDashboard() {
   const [fFN, setFFN] = useState(""); const [fFE, setFFE] = useState(""); const [fFDes, setFFDes] = useState(""); const [fFDept, setFFDept] = useState("");
   // ── Form: Admin
   const [fAE, setFAE] = useState(""); const [fAN, setFAN] = useState(""); const [fAR, setFAR] = useState<"org_admin"|"dept_admin">("org_admin"); const [fADept, setFADept] = useState("");
+  // ── Form: Subject
+  const [fSubN, setFSubN] = useState(""); const [fSubC, setFSubC] = useState("");
   // ── Bulk import
   const [bulkFile, setBulkFile]         = useState<File | null>(null);
   const [bulkDeptId, setBulkDeptId]     = useState("");
@@ -269,6 +280,48 @@ export default function SuperDashboard() {
     if (tab === "faculty")     { if (faculty.length === 0)  fetchFaculty(selectedOrg.id); }
     if (tab === "students")    { if (students.length === 0) fetchStudents(selectedOrg.id); }
     if (tab === "admins")      { fetchOrgAdmins(selectedOrg.id); }
+  }
+
+  /* ── Dept / Semester / Subject drill-down ────────────────── */
+  async function openDept(dept: DeptRow) {
+    setSelectedDept(dept);
+    setSelectedSemester(null);
+    setSubjects([]);
+  }
+
+  async function openSemester(sem: number) {
+    if (!selectedDept) return;
+    setSelectedSemester(sem);
+    setSubjectsLoading(true);
+    try {
+      const r = await apiFetch(`/admin/subjects?dept_id=${selectedDept.id}&semester=${sem}`);
+      if (r.ok) setSubjects(await r.json());
+    } catch {}
+    finally { setSubjectsLoading(false); }
+  }
+
+  async function createSubject() {
+    if (!selectedDept || !selectedSemester || !fSubN || !fSubC) return;
+    setSaving(true);
+    try {
+      const s = await api<SubjectRow>("/admin/subjects", {
+        method: "POST",
+        body: JSON.stringify({ name: fSubN, code: fSubC, dept_id: selectedDept.id, semester: selectedSemester }),
+      });
+      showToast(`✓ "${s.name}" added`);
+      closeModal();
+      setSubjects(p => [...p, s]);
+    } catch (e: any) { showToast("✗ " + e.message); }
+    finally { setSaving(false); }
+  }
+
+  async function deleteSubject(id: string, name: string) {
+    if (!confirm(`Delete subject "${name}"?`)) return;
+    try {
+      await api(`/admin/subjects/${id}`, { method: "DELETE" });
+      showToast(`✓ "${name}" deleted`);
+      setSubjects(p => p.filter(s => s.id !== id));
+    } catch (e: any) { showToast("✗ " + e.message); }
   }
 
   /* ── CRUD helpers ────────────────────────────────────────── */
@@ -393,6 +446,190 @@ export default function SuperDashboard() {
   }
 
   /* ═══════════════════════════════════════════════════════════
+     DEPT DETAIL VIEW (Semester Grid → Subject List)
+     ═══════════════════════════════════════════════════════════ */
+  if (selectedDept) {
+    const SEMESTERS = [1, 2, 3, 4, 5, 6, 7, 8];
+    const SEM_COLORS = ["#38bdf8","#22d37a","#a78bfa","#f5c842","#ff9f0a","#f05a5a","#e879f9","#6ee7b7"];
+
+    return (
+      <div style={{ minHeight: "100dvh", background: "var(--bg)", paddingBottom: 24 }}>
+        <Toast msg={toast} />
+
+        {/* Sticky dept header */}
+        <div style={{
+          position: "sticky", top: 0, zIndex: 100,
+          background: "rgba(8,7,15,0.97)", backdropFilter: "blur(20px)",
+          borderBottom: "1px solid var(--border)", padding: "14px 16px",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <button
+              onClick={() => {
+                if (selectedSemester !== null) {
+                  setSelectedSemester(null);
+                  setSubjects([]);
+                } else {
+                  setSelectedDept(null);
+                }
+              }}
+              style={{ width: 36, height: 36, borderRadius: 10, background: "var(--bg-card-2)", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--text-secondary)", flexShrink: 0 }}
+            >
+              <ChevronLeft size={20} />
+            </button>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              {/* Breadcrumb */}
+              <div style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 2, display: "flex", alignItems: "center", gap: 4 }}>
+                <span style={{ color: "var(--accent-2)", cursor: "pointer" }} onClick={() => { setSelectedDept(null); setSelectedSemester(null); }}>
+                  {selectedOrg?.name}
+                </span>
+                <ChevronRight size={10} />
+                <span style={{ color: selectedSemester ? "var(--accent-2)" : "var(--text-primary)", cursor: selectedSemester ? "pointer" : "default" }}
+                  onClick={() => { if (selectedSemester !== null) { setSelectedSemester(null); setSubjects([]); } }}>
+                  {selectedDept.name}
+                </span>
+                {selectedSemester !== null && (
+                  <>
+                    <ChevronRight size={10} />
+                    <span style={{ color: "var(--text-primary)" }}>Semester {selectedSemester}</span>
+                  </>
+                )}
+              </div>
+              <div style={{ fontWeight: 800, fontSize: 16, letterSpacing: -0.3 }}>
+                {selectedSemester !== null ? `Semester ${selectedSemester} Subjects` : `${selectedDept.name} — Semesters`}
+              </div>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 2 }}>
+                <span style={{ fontSize: 10, background: "var(--accent-dim)", color: "var(--accent-2)", padding: "2px 8px", borderRadius: 99, fontWeight: 700 }}>{selectedDept.code}</span>
+                {selectedDept.institute_name && <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{selectedDept.institute_name}</span>}
+              </div>
+            </div>
+            {selectedSemester !== null && (
+              <button
+                onClick={() => { setFSubN(""); setFSubC(""); setModal("subject"); }}
+                style={{
+                  display: "flex", alignItems: "center", gap: 6, flexShrink: 0,
+                  background: "linear-gradient(135deg, var(--grad-start), var(--grad-end))",
+                  border: "none", borderRadius: 10, padding: "8px 14px",
+                  color: "white", fontSize: 13, fontWeight: 700, cursor: "pointer",
+                  boxShadow: "0 4px 12px var(--accent-glow)",
+                }}
+              >
+                <Plus size={15} /> Add Subject
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div style={{ padding: 16 }}>
+          {/* ── SEMESTER GRID ── */}
+          {selectedSemester === null && (
+            <div className="fade-up">
+              <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 18 }}>
+                Select a semester to view and manage its subjects.
+              </p>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                {SEMESTERS.map((sem, idx) => (
+                  <button
+                    key={sem}
+                    onClick={() => openSemester(sem)}
+                    style={{
+                      background: `linear-gradient(135deg, ${SEM_COLORS[idx]}12, ${SEM_COLORS[idx]}06)`,
+                      border: `1px solid ${SEM_COLORS[idx]}30`,
+                      borderRadius: 16, padding: "20px 16px",
+                      cursor: "pointer", textAlign: "left",
+                      transition: "transform 0.15s, box-shadow 0.15s",
+                      fontFamily: "inherit",
+                    }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLButtonElement).style.boxShadow = `0 8px 24px ${SEM_COLORS[idx]}20`; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.transform = ""; (e.currentTarget as HTMLButtonElement).style.boxShadow = ""; }}
+                  >
+                    <div style={{ fontSize: 28, fontWeight: 900, color: SEM_COLORS[idx], letterSpacing: -1, marginBottom: 4 }}>
+                      {sem}
+                    </div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)" }}>Semester</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 10 }}>
+                      <BookOpen size={12} style={{ color: SEM_COLORS[idx] }} />
+                      <span style={{ fontSize: 11, color: "var(--text-muted)" }}>View subjects</span>
+                      <ChevronRight size={11} style={{ color: SEM_COLORS[idx], marginLeft: "auto" }} />
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── SUBJECT LIST ── */}
+          {selectedSemester !== null && (
+            <div className="fade-up">
+              {subjectsLoading ? <Spinner /> : subjects.length === 0 ? (
+                <Empty
+                  label={`No subjects in Semester ${selectedSemester} yet — click "Add Subject" above`}
+                  icon={<BookOpen size={36} />}
+                />
+              ) : (
+                <div>
+                  {subjects.map((s, idx) => (
+                    <div key={s.id} className="card" style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 12 }}>
+                      <div style={{
+                        width: 46, height: 46, borderRadius: 12, flexShrink: 0,
+                        background: `${SEM_COLORS[(selectedSemester - 1) % SEM_COLORS.length]}15`,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontWeight: 800, fontSize: 10, color: SEM_COLORS[(selectedSemester - 1) % SEM_COLORS.length],
+                        letterSpacing: -0.3,
+                      }}>
+                        {s.code}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: 14 }}>{s.name}</div>
+                        <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
+                          {s.code} · Semester {s.semester}
+                        </div>
+                      </div>
+                      <IBtn
+                        icon={<Trash2 size={14} />}
+                        color="var(--danger)"
+                        onClick={() => deleteSubject(s.id, s.name)}
+                        title="Delete subject"
+                      />
+                    </div>
+                  ))}
+                  <div style={{ marginTop: 8, padding: "10px 14px", background: "rgba(124,111,224,0.05)", borderRadius: 10, border: "1px solid var(--border-accent)", fontSize: 12, color: "var(--text-muted)" }}>
+                    {subjects.length} subject{subjects.length !== 1 ? "s" : ""} in Semester {selectedSemester}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Add Subject Modal */}
+        {modal === "subject" && selectedSemester !== null && (
+          <Modal title={`Add Subject · Sem ${selectedSemester} · ${selectedDept.code}`} onClose={closeModal}>
+            <F label="Subject Name"><input className="input" placeholder="e.g. Data Structures" value={fSubN} onChange={e => setFSubN(e.target.value)} autoFocus /></F>
+            <F label="Subject Code"><input className="input" placeholder="e.g. CS301" value={fSubC} onChange={e => setFSubC(e.target.value.toUpperCase())} maxLength={12} /></F>
+            <div style={{ padding: "10px 14px", background: "rgba(124,111,224,0.06)", borderRadius: 10, marginBottom: 16, border: "1px solid var(--border-accent)" }}>
+              <p style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}>
+                Department: <strong style={{ color: "var(--accent-2)" }}>{selectedDept.name}</strong><br />
+                Semester: <strong style={{ color: "#f5c842" }}>{selectedSemester}</strong>
+              </p>
+            </div>
+            <button className="btn btn-primary" onClick={createSubject} disabled={saving || !fSubN || !fSubC}>
+              {saving ? <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> : <><Check size={15} /> Add Subject</>}
+            </button>
+          </Modal>
+        )}
+
+        <style>{`
+          @keyframes spin { to { transform: rotate(360deg); } }
+          @keyframes slideDown { from { opacity:0; transform:translateX(-50%) translateY(-8px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
+          @keyframes slideUp { from { opacity:0; transform:translateY(20px); } to { opacity:1; transform:translateY(0); } }
+          @keyframes fadeUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+          .fade-up { animation: fadeUp 0.25s ease; }
+        `}</style>
+      </div>
+    );
+  }
+
+  /* ═══════════════════════════════════════════════════════════
      ORG DETAIL VIEW
      ═══════════════════════════════════════════════════════════ */
   if (selectedOrg) {
@@ -486,7 +723,7 @@ export default function SuperDashboard() {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
                 <div>
                   <div style={{ fontWeight: 800, fontSize: 18, letterSpacing: -0.3 }}>Departments</div>
-                  <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>in {selectedOrg.name}</div>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>in {selectedOrg.name} · tap to manage semesters</div>
                 </div>
                 <AddBtn label="Add" onClick={() => { setFDN(""); setFDC(""); setFDI(""); setModal("dept"); }} />
               </div>
@@ -494,7 +731,12 @@ export default function SuperDashboard() {
               {orgDataLoading ? <Spinner /> : depts.length === 0 ? (
                 <Empty label="No departments yet — add one above" icon={<Building2 size={36} />} />
               ) : depts.map(d => (
-                <div key={d.id} className="card" style={{ marginBottom: 10 }}>
+                <div
+                  key={d.id}
+                  className="card"
+                  style={{ marginBottom: 10, cursor: "pointer", transition: "box-shadow 0.18s" }}
+                  onClick={() => openDept(d)}
+                >
                   <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
                     <div style={{ width: 46, height: 46, borderRadius: 12, flexShrink: 0, background: "var(--accent-dim)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 10, color: "var(--accent-2)", letterSpacing: -0.3 }}>
                       {d.code}
@@ -513,7 +755,10 @@ export default function SuperDashboard() {
                         </span>
                       </div>
                     </div>
-                    <IBtn icon={<Trash2 size={14} />} color="var(--danger)" onClick={e => deleteDept(d.id, d.name, e)} title="Delete department" />
+                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <ChevronRight size={16} style={{ color: "var(--accent-2)" }} />
+                      <IBtn icon={<Trash2 size={14} />} color="var(--danger)" onClick={e => deleteDept(d.id, d.name, e)} title="Delete department" />
+                    </div>
                   </div>
                 </div>
               ))}
@@ -936,6 +1181,7 @@ export default function SuperDashboard() {
             </button>
           </Modal>
         )}
+
 
         <style>{`
           @keyframes spin { to { transform: rotate(360deg); } }
