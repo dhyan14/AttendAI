@@ -1,11 +1,11 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import {
   Upload, Camera, Trash2, CheckCircle2, Loader2,
   ChevronLeft, ToggleLeft, ToggleRight, AlertTriangle,
-  Sparkles, Check, Hash,
+  Sparkles, Check, Hash, ZoomIn, X, Users, UserCheck, UserX,
 } from "lucide-react";
 
 // ─── Types ──────────────────────────────────────────────────
@@ -15,14 +15,26 @@ interface Lecture {
   division: string; batch: string; lecture_no: number;
   date: string; status: string; total_students: number; present_count: number;
 }
+interface FaceBox {
+  bbox: [number, number, number, number]; // [x1,y1,x2,y2] in ORIGINAL image coords
+  matched: boolean;
+  student_id: string | null;
+  student_name: string | null;
+  roll_no: string | null;
+  confidence: number;
+}
 interface DetectionResult {
   student_id: string; student_name: string; roll_no: string;
   status: "present" | "absent"; confidence: number;
 }
 interface AIResult {
   ai_used: boolean; mode: string; warning: string | null;
-  images_processed: number; image_previews: string[];
-  detected_faces: number; total_students: number;
+  images_processed: number;
+  image_previews: string[];
+  image_annotations: FaceBox[][];  // per-image face boxes
+  detected_faces: number;
+  matched_faces: number;
+  total_students: number;
   detection_results: DetectionResult[];
 }
 
@@ -57,7 +69,155 @@ function Toast({ msg }: { msg: string }) {
   );
 }
 
-// ─── Main ───────────────────────────────────────────────────
+// ─── Annotated Photo Canvas ─────────────────────────────────
+// Draws the classroom photo with green/red bounding boxes on a canvas
+function AnnotatedPhoto({
+  src,
+  annotations,
+  onClose,
+}: {
+  src: string;
+  annotations: FaceBox[];
+  onClose?: () => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+
+  const draw = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx || !imgRef.current) return;
+
+    const img = imgRef.current;
+    canvas.width  = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+
+    ctx.drawImage(img, 0, 0);
+
+    const scaleX = img.naturalWidth;
+    const scaleY = img.naturalHeight;
+
+    for (const face of annotations) {
+      const [x1, y1, x2, y2] = face.bbox;
+      const w = x2 - x1;
+      const h = y2 - y1;
+
+      const color = face.matched ? "#22d37a" : "#ff453a";
+      const lineW = Math.max(2, Math.round(scaleX / 250));
+
+      // Shadow for visibility on any background
+      ctx.shadowColor = "rgba(0,0,0,0.8)";
+      ctx.shadowBlur = 4;
+
+      // Bounding box
+      ctx.strokeStyle = color;
+      ctx.lineWidth = lineW;
+      ctx.strokeRect(x1, y1, w, h);
+
+      // Corner brackets (thicker) for premium look
+      const corner = Math.min(w, h) * 0.25;
+      ctx.lineWidth = lineW * 2;
+      ctx.beginPath();
+      // TL
+      ctx.moveTo(x1, y1 + corner); ctx.lineTo(x1, y1); ctx.lineTo(x1 + corner, y1);
+      // TR
+      ctx.moveTo(x2 - corner, y1); ctx.lineTo(x2, y1); ctx.lineTo(x2, y1 + corner);
+      // BR
+      ctx.moveTo(x2, y2 - corner); ctx.lineTo(x2, y2); ctx.lineTo(x2 - corner, y2);
+      // BL
+      ctx.moveTo(x1 + corner, y2); ctx.lineTo(x1, y2); ctx.lineTo(x1, y2 - corner);
+      ctx.stroke();
+
+      ctx.shadowBlur = 0;
+
+      // Label background
+      const label = face.matched
+        ? `${face.roll_no || face.student_name} (${Math.round(face.confidence * 100)}%)`
+        : `Unknown (${Math.round(face.confidence * 100)}%)`;
+      const fontSize = Math.max(12, Math.round(scaleX / 60));
+      ctx.font = `bold ${fontSize}px sans-serif`;
+      const textW = ctx.measureText(label).width;
+      const padX = 8, padY = 5;
+      const tagH = fontSize + padY * 2;
+      const tagY = y1 - tagH > 0 ? y1 - tagH : y2;
+      const tagX = Math.min(x1, scaleX - textW - padX * 2);
+
+      ctx.fillStyle = face.matched ? "rgba(34,211,122,0.92)" : "rgba(255,69,58,0.92)";
+      ctx.beginPath();
+      ctx.roundRect(tagX, tagY, textW + padX * 2, tagH, 4);
+      ctx.fill();
+
+      ctx.fillStyle = "#fff";
+      ctx.fillText(label, tagX + padX, tagY + padY + fontSize * 0.85);
+    }
+  }, [annotations]);
+
+  useEffect(() => {
+    const img = new Image();
+    img.onload = () => { imgRef.current = img; draw(); };
+    img.src = src;
+  }, [src, draw]);
+
+  const canvasStyle: React.CSSProperties = {
+    width: "100%", height: "100%", objectFit: "contain",
+    borderRadius: onClose ? 0 : 12,
+    display: "block",
+  };
+
+  if (onClose) {
+    // Full-screen lightbox mode
+    return (
+      <div style={{
+        position: "fixed", inset: 0, zIndex: 1000,
+        background: "rgba(0,0,0,0.96)", display: "flex",
+        flexDirection: "column", alignItems: "center", justifyContent: "center",
+      }}>
+        <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <canvas ref={canvasRef} style={canvasStyle} />
+          <button
+            onClick={onClose}
+            style={{
+              position: "absolute", top: 16, right: 16,
+              width: 40, height: 40, borderRadius: "50%",
+              background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)",
+              color: "#fff", cursor: "pointer", display: "flex",
+              alignItems: "center", justifyContent: "center",
+            }}
+          >
+            <X size={20} />
+          </button>
+
+          {/* Legend */}
+          <div style={{
+            position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)",
+            display: "flex", gap: 16, background: "rgba(0,0,0,0.7)",
+            padding: "8px 18px", borderRadius: 99, backdropFilter: "blur(10px)",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#22d37a" }}>
+              <div style={{ width: 12, height: 12, border: "2px solid #22d37a", borderRadius: 2 }} />
+              Matched
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#ff453a" }}>
+              <div style={{ width: 12, height: 12, border: "2px solid #ff453a", borderRadius: 2 }} />
+              Unmatched
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <canvas
+      ref={canvasRef}
+      style={{ ...canvasStyle, cursor: "zoom-in", maxHeight: 320 }}
+    />
+  );
+}
+
+
+// ─── Main Page ───────────────────────────────────────────────
 export default function TakeAttendancePage() {
   const router = useRouter();
   const [toast, setToast] = useState("");
@@ -65,18 +225,18 @@ export default function TakeAttendancePage() {
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
 
-  // ── Step 1: inline lecture setup ────────────────────────
-  const [subjects, setSubjects]       = useState<Subject[]>([]);
-  const [selSubject, setSelSubject]   = useState<Subject | null>(null);
-  const [lecNo, setLecNo]             = useState("");
-  const [division, setDivision]       = useState("");
-  const [batch, setBatch]             = useState("All");
+  // ── Step 1 ────────────────────────────────────────────────
+  const [subjects, setSubjects]     = useState<Subject[]>([]);
+  const [selSubject, setSelSubject] = useState<Subject | null>(null);
+  const [lecNo, setLecNo]           = useState("");
+  const [division, setDivision]     = useState("");
+  const [batch, setBatch]           = useState("All");
   const today = new Date().toISOString().slice(0, 10);
-  const [lecDate, setLecDate]         = useState(today);
-  const [creating, setCreating]       = useState(false);
-  const [lecture, setLecture]         = useState<Lecture | null>(null);
+  const [lecDate, setLecDate]       = useState(today);
+  const [creating, setCreating]     = useState(false);
+  const [lecture, setLecture]       = useState<Lecture | null>(null);
 
-  // ── Photos ───────────────────────────────────────────────
+  // ── Photos ────────────────────────────────────────────────
   const [photos, setPhotos]           = useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
   const [showCam, setShowCam]         = useState(false);
@@ -84,15 +244,16 @@ export default function TakeAttendancePage() {
   const videoRef  = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // ── Step 2 ───────────────────────────────────────────────
+  // ── Step 2 ────────────────────────────────────────────────
   const [procProgress, setProcProgress] = useState(0);
 
-  // ── Step 3 ───────────────────────────────────────────────
-  const [aiResult, setAiResult]       = useState<AIResult | null>(null);
-  const [overrides, setOverrides]     = useState<Record<string, boolean>>({});
-  const [finalizing, setFinalizing]   = useState(false);
+  // ── Step 3 ────────────────────────────────────────────────
+  const [aiResult, setAiResult]     = useState<AIResult | null>(null);
+  const [overrides, setOverrides]   = useState<Record<string, boolean>>({});
+  const [finalizing, setFinalizing] = useState(false);
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null); // full-screen image index
 
-  // ── Load subjects for this faculty ──────────────────────
+  // ── Load subjects ─────────────────────────────────────────
   useEffect(() => {
     apiFetch("/subjects/")
       .then(r => r.ok ? r.json() : [])
@@ -100,7 +261,7 @@ export default function TakeAttendancePage() {
       .catch(() => {});
   }, []);
 
-  // ── Photo helpers ──────────────────────────────────────
+  // ── Photo helpers ─────────────────────────────────────────
   const addPhotos = (files: FileList | null) => {
     if (!files) return;
     const toAdd = Array.from(files).slice(0, 5 - photos.length);
@@ -114,7 +275,7 @@ export default function TakeAttendancePage() {
     setPhotoPreviews(p => p.filter((_, idx) => idx !== i));
   };
 
-  // Camera
+  // ── Camera ────────────────────────────────────────────────
   const startCamera = async () => {
     setShowCam(true);
     try {
@@ -136,10 +297,10 @@ export default function TakeAttendancePage() {
       setPhotos(p => [...p, file]);
       const url = URL.createObjectURL(blob);
       setPhotoPreviews(p => [...p, url]);
-    }, "image/jpeg", 0.85);
+    }, "image/jpeg", 0.95); // high quality capture
   };
 
-  // ── Create lecture + run AI ────────────────────────────
+  // ── Create lecture + run AI ───────────────────────────────
   const startRecognition = async () => {
     if (!selSubject || !lecNo || photos.length === 0) return;
     if (!division.trim()) { showToast("✗ Enter a division (e.g. A)"); return; }
@@ -147,7 +308,6 @@ export default function TakeAttendancePage() {
     setCreating(true);
     let lec: Lecture;
     try {
-      // 1. Create the lecture
       const r = await apiFetch("/attendance/lectures", {
         method: "POST",
         body: JSON.stringify({
@@ -173,10 +333,9 @@ export default function TakeAttendancePage() {
     }
     setCreating(false);
 
-    // 2. Move to step 2 and run AI
     setStep(2);
     setProcProgress(0);
-    const tick = setInterval(() => setProcProgress(p => Math.min(p + 7, 88)), 280);
+    const tick = setInterval(() => setProcProgress(p => Math.min(p + 6, 88)), 300);
 
     try {
       const form = new FormData();
@@ -207,7 +366,7 @@ export default function TakeAttendancePage() {
     }
   };
 
-  // ── Finalize ──────────────────────────────────────────
+  // ── Finalize ──────────────────────────────────────────────
   const finalize = async () => {
     if (!lecture) return;
     setFinalizing(true);
@@ -237,6 +396,15 @@ export default function TakeAttendancePage() {
       <Toast msg={toast} />
       <canvas ref={canvasRef} style={{ display: "none" }} />
 
+      {/* Lightbox full-screen annotated photo */}
+      {lightboxIdx !== null && aiResult && aiResult.image_previews[lightboxIdx] && (
+        <AnnotatedPhoto
+          src={aiResult.image_previews[lightboxIdx]}
+          annotations={aiResult.image_annotations?.[lightboxIdx] ?? []}
+          onClose={() => setLightboxIdx(null)}
+        />
+      )}
+
       {/* Header */}
       <div style={{ marginBottom: 22 }}>
         <button
@@ -247,7 +415,6 @@ export default function TakeAttendancePage() {
         </button>
         <h1 style={{ fontSize: 22, fontWeight: 900, letterSpacing: -0.5, marginBottom: 14 }}>Take Attendance</h1>
 
-        {/* Steps */}
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <StepDot n={1} active={step === 1} done={step > 1} />
           <div style={{ flex: 1, height: 2, background: step > 1 ? "#22d37a" : "var(--border)", borderRadius: 2, transition: "background 0.3s" }} />
@@ -267,9 +434,7 @@ export default function TakeAttendancePage() {
         <>
           {/* Subject selector */}
           <div className="card" style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.8 }}>
-              Subject
-            </div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.8 }}>Subject</div>
             {subjects.length === 0
               ? <div style={{ fontSize: 13, color: "var(--text-muted)" }}>No subjects found. Ask admin to add subjects.</div>
               : (
@@ -299,13 +464,10 @@ export default function TakeAttendancePage() {
               )}
           </div>
 
-          {/* Lecture details row */}
+          {/* Lecture details */}
           <div className="card" style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.8 }}>
-              Lecture Details
-            </div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.8 }}>Lecture Details</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              {/* Lecture No */}
               <div>
                 <label style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, display: "block", marginBottom: 4 }}>Lecture No *</label>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-card-2)" }}>
@@ -318,53 +480,29 @@ export default function TakeAttendancePage() {
                   />
                 </div>
               </div>
-
-              {/* Division */}
               <div>
                 <label style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, display: "block", marginBottom: 4 }}>Division *</label>
                 <input
                   type="text" value={division}
                   onChange={e => setDivision(e.target.value)}
-                  placeholder="e.g. A"
-                  maxLength={5}
-                  style={{
-                    width: "100%", padding: "10px 12px", borderRadius: 10,
-                    border: "1px solid var(--border)", background: "var(--bg-card-2)",
-                    outline: "none", fontSize: 14, fontWeight: 700, color: "var(--text)",
-                    fontFamily: "inherit", boxSizing: "border-box",
-                  }}
+                  placeholder="e.g. A" maxLength={5}
+                  style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-card-2)", outline: "none", fontSize: 14, fontWeight: 700, color: "var(--text)", fontFamily: "inherit", boxSizing: "border-box" }}
                 />
               </div>
-
-              {/* Batch */}
               <div>
                 <label style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, display: "block", marginBottom: 4 }}>Batch</label>
                 <select
-                  value={batch}
-                  onChange={e => setBatch(e.target.value)}
-                  style={{
-                    width: "100%", padding: "10px 12px", borderRadius: 10,
-                    border: "1px solid var(--border)", background: "var(--bg-card-2)",
-                    outline: "none", fontSize: 13, color: "var(--text)",
-                    fontFamily: "inherit", appearance: "none",
-                  }}
+                  value={batch} onChange={e => setBatch(e.target.value)}
+                  style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-card-2)", outline: "none", fontSize: 13, color: "var(--text)", fontFamily: "inherit", appearance: "none" }}
                 >
                   {["All", "B1", "B2", "B3", "B4"].map(b => <option key={b} value={b}>{b}</option>)}
                 </select>
               </div>
-
-              {/* Date */}
               <div>
                 <label style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, display: "block", marginBottom: 4 }}>Date</label>
                 <input
-                  type="date" value={lecDate}
-                  onChange={e => setLecDate(e.target.value)}
-                  style={{
-                    width: "100%", padding: "10px 12px", borderRadius: 10,
-                    border: "1px solid var(--border)", background: "var(--bg-card-2)",
-                    outline: "none", fontSize: 13, color: "var(--text)",
-                    fontFamily: "inherit", boxSizing: "border-box",
-                  }}
+                  type="date" value={lecDate} onChange={e => setLecDate(e.target.value)}
+                  style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-card-2)", outline: "none", fontSize: 13, color: "var(--text)", fontFamily: "inherit", boxSizing: "border-box" }}
                 />
               </div>
             </div>
@@ -375,7 +513,6 @@ export default function TakeAttendancePage() {
             <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.8 }}>
               Classroom Photos ({photos.length}/5)
             </div>
-
             {photoPreviews.length > 0 && (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 10 }}>
                 {photoPreviews.map((src, i) => (
@@ -383,12 +520,7 @@ export default function TakeAttendancePage() {
                     <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     <button
                       onClick={() => removePhoto(i)}
-                      style={{
-                        position: "absolute", top: 4, right: 4, width: 22, height: 22,
-                        borderRadius: "50%", background: "rgba(240,90,90,0.9)",
-                        border: "none", color: "#fff", cursor: "pointer",
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                      }}
+                      style={{ position: "absolute", top: 4, right: 4, width: 22, height: 22, borderRadius: "50%", background: "rgba(240,90,90,0.9)", border: "none", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
                     >
                       <Trash2 size={11} />
                     </button>
@@ -397,12 +529,11 @@ export default function TakeAttendancePage() {
                 ))}
               </div>
             )}
-
             {photos.length < 5 && (
               <div style={{ display: "flex", gap: 8 }}>
                 <label style={{ flex: 1, cursor: "pointer" }}>
                   <input type="file" accept="image/*" multiple style={{ display: "none" }} onChange={e => addPhotos(e.target.files)} />
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "12px", borderRadius: 12, border: "2px dashed var(--border)", background: "var(--bg-card-2)", color: "var(--text-secondary)", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "12px", borderRadius: 12, border: "2px dashed var(--border)", background: "var(--bg-card-2)", color: "var(--text-secondary)", fontSize: 13, fontWeight: 700 }}>
                     <Upload size={15} /> Upload
                   </div>
                 </label>
@@ -415,11 +546,10 @@ export default function TakeAttendancePage() {
               </div>
             )}
             <div style={{ fontSize: 11, color: "var(--text-muted)", textAlign: "center", marginTop: 8 }}>
-              Upload up to 5 classroom photos for best accuracy
+              Upload up to 5 classroom photos — more angles = better accuracy
             </div>
           </div>
 
-          {/* Start button */}
           <button
             onClick={startRecognition}
             disabled={!canStart || creating}
@@ -437,10 +567,7 @@ export default function TakeAttendancePage() {
               ? <><Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> Creating lecture…</>
               : <><Sparkles size={18} /> Start AI Recognition</>}
           </button>
-
           {!selSubject && <div style={{ textAlign: "center", fontSize: 11, color: "var(--text-muted)", marginTop: 8 }}>Select a subject to continue</div>}
-          {selSubject && !lecNo && <div style={{ textAlign: "center", fontSize: 11, color: "var(--text-muted)", marginTop: 8 }}>Enter lecture number to continue</div>}
-          {selSubject && lecNo && photos.length === 0 && <div style={{ textAlign: "center", fontSize: 11, color: "var(--text-muted)", marginTop: 8 }}>Add at least 1 classroom photo</div>}
         </>
       )}
 
@@ -452,7 +579,7 @@ export default function TakeAttendancePage() {
           </div>
           <div style={{ fontSize: 20, fontWeight: 900, marginBottom: 8 }}>Analysing Faces…</div>
           <div style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 28 }}>
-            Scanning {photos.length} {photos.length === 1 ? "photo" : "photos"} · {selSubject?.name}
+            Scanning {photos.length} {photos.length === 1 ? "photo" : "photos"} with tiled multi-scale detection
           </div>
           <div style={{ height: 8, background: "var(--bg-card-2)", borderRadius: 99, overflow: "hidden", maxWidth: 320, margin: "0 auto" }}>
             <div style={{ height: "100%", borderRadius: 99, background: "linear-gradient(90deg, var(--accent), #22d37a)", width: `${procProgress}%`, transition: "width 0.3s ease" }} />
@@ -461,7 +588,7 @@ export default function TakeAttendancePage() {
         </div>
       )}
 
-      {/* ══════════════ STEP 3 ══════════════ */}
+      {/* ══════════════ STEP 3 — REVIEW ══════════════ */}
       {step === 3 && aiResult && (
         <>
           {aiResult.warning && (
@@ -471,7 +598,7 @@ export default function TakeAttendancePage() {
             </div>
           )}
 
-          {/* Lecture info pill */}
+          {/* Lecture pill */}
           {lecture && (
             <div style={{ padding: "10px 14px", borderRadius: 12, background: "var(--bg-card-2)", border: "1px solid var(--border)", marginBottom: 12, fontSize: 12, color: "var(--text-secondary)" }}>
               <span style={{ fontWeight: 700, color: "var(--text)" }}>{lecture.subject_name}</span>
@@ -480,36 +607,73 @@ export default function TakeAttendancePage() {
             </div>
           )}
 
-          {/* Stats */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 12 }}>
+          {/* Detection summary stats */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 14 }}>
             {[
-              { label: "Present", value: presentCount, color: "#22d37a" },
-              { label: "Absent",  value: totalStudents - presentCount, color: "var(--danger)" },
-              { label: "Total",   value: totalStudents, color: "var(--text-secondary)" },
-            ].map(({ label, value, color }) => (
-              <div key={label} className="card" style={{ textAlign: "center", padding: "14px 8px" }}>
-                <div style={{ fontSize: 26, fontWeight: 900, color }}>{value}</div>
-                <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>{label}</div>
+              { label: "Detected", value: aiResult.detected_faces, color: "var(--accent)", icon: <Users size={14} /> },
+              { label: "Matched", value: aiResult.matched_faces ?? presentCount, color: "#22d37a", icon: <UserCheck size={14} /> },
+              { label: "Present", value: presentCount, color: "#22d37a", icon: <Check size={14} /> },
+              { label: "Absent", value: totalStudents - presentCount, color: "var(--danger)", icon: <UserX size={14} /> },
+            ].map(({ label, value, color, icon }) => (
+              <div key={label} className="card" style={{ textAlign: "center", padding: "12px 6px" }}>
+                <div style={{ color, marginBottom: 4, display: "flex", justifyContent: "center" }}>{icon}</div>
+                <div style={{ fontSize: 22, fontWeight: 900, color }}>{value}</div>
+                <div style={{ fontSize: 9, color: "var(--text-muted)", marginTop: 2, textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</div>
               </div>
             ))}
           </div>
 
-          {/* Image previews */}
+          {/* ── ANNOTATED PHOTO VIEWER ─────────────────────────────── */}
           {aiResult.image_previews.length > 0 && (
-            <div className="card" style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.8 }}>Scanned Photos</div>
-              <div style={{ display: "flex", gap: 8, overflowX: "auto" }}>
-                {aiResult.image_previews.map((src, i) => (
-                  <img key={i} src={src} alt="" style={{ height: 72, width: 96, objectFit: "cover", borderRadius: 8, flexShrink: 0, border: "1px solid var(--border)" }} />
-                ))}
+            <div className="card" style={{ marginBottom: 14, padding: 0, overflow: "hidden" }}>
+              <div style={{ padding: "12px 14px 10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.8 }}>
+                  📸 Scanned Photos — Tap to enlarge
+                </div>
+                <div style={{ display: "flex", gap: 10, fontSize: 10, fontWeight: 700 }}>
+                  <span style={{ color: "#22d37a" }}>■ Matched</span>
+                  <span style={{ color: "#ff453a" }}>■ Unknown</span>
+                </div>
+              </div>
+
+              {/* Photo strip with annotated canvases */}
+              <div style={{ display: "flex", gap: 0, overflowX: "auto" }}>
+                {aiResult.image_previews.map((src, i) => {
+                  const annotations = aiResult.image_annotations?.[i] ?? [];
+                  const matched = annotations.filter(a => a.matched).length;
+                  const unmatched = annotations.filter(a => !a.matched).length;
+                  return (
+                    <div
+                      key={i}
+                      onClick={() => setLightboxIdx(i)}
+                      style={{ position: "relative", minWidth: 200, cursor: "zoom-in", borderRight: "1px solid var(--border)" }}
+                    >
+                      <AnnotatedPhoto src={src} annotations={annotations} />
+                      {/* Face count badge */}
+                      <div style={{
+                        position: "absolute", top: 8, left: 8,
+                        background: "rgba(0,0,0,0.75)", backdropFilter: "blur(4px)",
+                        borderRadius: 99, padding: "3px 10px",
+                        display: "flex", gap: 8, alignItems: "center",
+                      }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: "#22d37a" }}>✓ {matched}</span>
+                        {unmatched > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: "#ff453a" }}>✗ {unmatched}</span>}
+                      </div>
+                      {/* Zoom icon */}
+                      <div style={{ position: "absolute", bottom: 8, right: 8, background: "rgba(0,0,0,0.6)", borderRadius: "50%", width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <ZoomIn size={14} color="#fff" />
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
 
           {/* Student list */}
           <div className="card" style={{ marginBottom: 14 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.8 }}>Review — tap to toggle</div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 12 }}>
+              Review — tap to toggle
             </div>
             {aiResult.detection_results.map(d => {
               const isPresent = overrides[d.student_id] ?? (d.status === "present");
@@ -543,6 +707,7 @@ export default function TakeAttendancePage() {
             })}
           </div>
 
+          {/* Finalize button — photo viewer disappears after this */}
           <button
             onClick={finalize}
             disabled={finalizing}
@@ -557,10 +722,10 @@ export default function TakeAttendancePage() {
           >
             {finalizing
               ? <><Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> Finalizing…</>
-              : <><Check size={18} /> Finalize Attendance ({presentCount} present)</>}
+              : <><Check size={18} /> Submit Attendance ({presentCount} present)</>}
           </button>
           <div style={{ textAlign: "center", marginTop: 8, fontSize: 11, color: "var(--text-muted)" }}>
-            Tap any student to toggle. Changes are permanent after finalizing.
+            Tap any student to toggle. Photo annotations will clear after Submit.
           </div>
         </>
       )}
@@ -572,7 +737,7 @@ export default function TakeAttendancePage() {
           <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", maxWidth: 400, borderRadius: 18, border: "3px solid var(--accent)", background: "#000" }} />
           <div style={{ display: "flex", gap: 12 }}>
             <button onClick={capturePhoto} style={{ padding: "14px 32px", borderRadius: 99, background: "var(--accent)", color: "#fff", fontWeight: 800, fontSize: 16, border: "none", cursor: "pointer", fontFamily: "inherit" }}>📸 Capture</button>
-            <button onClick={stopCamera}   style={{ padding: "14px 24px", borderRadius: 99, background: "rgba(255,255,255,0.08)", color: "#fff", fontWeight: 700, fontSize: 14, border: "1px solid rgba(255,255,255,0.18)", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+            <button onClick={stopCamera} style={{ padding: "14px 24px", borderRadius: 99, background: "rgba(255,255,255,0.08)", color: "#fff", fontWeight: 700, fontSize: 14, border: "1px solid rgba(255,255,255,0.18)", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
           </div>
         </div>
       )}

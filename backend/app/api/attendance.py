@@ -405,59 +405,118 @@ async def take_attendance_ai(
     use_ai = face_service.initialized and len(stored_list) > 0
 
     detected_student_ids: set[str] = set()
-    image_previews: list[str] = []
     ai_confidences: dict[str, float] = {}   # student_id → confidence
 
+    # Per-image: list of annotated face boxes for canvas drawing on frontend
+    image_previews: list[str] = []          # high-quality base64 previews
+    image_annotations: list[list[dict]] = []  # per-image list of face boxes
+
     if use_ai:
-        # Real InsightFace recognition
         for upload in files:
             raw = await upload.read()
             if not raw:
                 continue
-            # thumbnail for preview
+
+            # HIGH QUALITY preview — 960px wide, quality=85 (was 480px/60q)
             try:
-                from PIL import Image
+                from PIL import Image as PILImage
                 import io as _io
-                img_pil = Image.open(_io.BytesIO(raw)).convert("RGB")
-                img_pil.thumbnail((480, 360))
+                img_pil = PILImage.open(_io.BytesIO(raw)).convert("RGB")
+                # Resize to max 960px wide keeping aspect ratio
+                max_w = 960
+                if img_pil.width > max_w:
+                    ratio = max_w / img_pil.width
+                    img_pil = img_pil.resize(
+                        (max_w, int(img_pil.height * ratio)),
+                        PILImage.LANCZOS
+                    )
                 buf = _io.BytesIO()
-                img_pil.save(buf, format="JPEG", quality=60)
+                img_pil.save(buf, format="JPEG", quality=85)
                 b64 = base64.b64encode(buf.getvalue()).decode()
                 image_previews.append(f"data:image/jpeg;base64,{b64}")
+                # Store scale factor so bboxes can be mapped to preview coords
+                orig_w = img_pil.width   # already resized
             except Exception:
-                pass
+                orig_w = None
 
+            # Run face detection + recognition
+            face_boxes: list[dict] = []
             try:
-                probe_embeddings_raw = face_service.get_embeddings(raw)
-                probe_vecs = [emb for (_bbox, emb) in probe_embeddings_raw]
-                matches = face_service.match_faces(probe_vecs, stored_list, threshold=0.45)
-                for m in matches:
-                    sid = m["student_id"]
-                    conf = m["confidence"]
-                    # keep highest confidence across all photos
-                    if sid not in ai_confidences or conf > ai_confidences[sid]:
-                        ai_confidences[sid] = conf
-                        detected_student_ids.add(sid)
+                probe_raw = face_service.get_embeddings(raw)   # [(bbox, embedding), ...]
+                probe_vecs = [emb for (_bbox, emb) in probe_raw]
+                probe_bboxes = [bbox for (bbox, _emb) in probe_raw]
+                matches = face_service.match_faces(probe_vecs, stored_list, threshold=0.40)
+
+                # Build a map: probe_index → matched student
+                # match_faces returns matches indexed by stored_list order — we need
+                # to re-run per-face to get the bbox→student mapping
+                # Re-do matching per face to get face→student association
+                from app.services.face_service import MATCH_THRESHOLD
+                import numpy as np
+                stored_vecs_arr = np.array([s["embedding"] for s in stored_list], dtype=np.float32)
+                stored_vecs_arr /= (np.linalg.norm(stored_vecs_arr, axis=1, keepdims=True) + 1e-8)
+
+                for p_idx, (bbox, probe_emb) in enumerate(probe_raw):
+                    probe_vec = np.array(probe_emb, dtype=np.float32)
+                    probe_vec /= (np.linalg.norm(probe_vec) + 1e-8)
+                    sims = stored_vecs_arr @ probe_vec
+                    best_idx = int(np.argmax(sims))
+                    best_sim = float(sims[best_idx])
+
+                    if best_sim >= MATCH_THRESHOLD:
+                        sid = stored_list[best_idx]["student_id"]
+                        # Find student name/roll from rec_rows
+                        matched_row = next(
+                            (r for r in rec_rows if str(r.AttendanceRecord.student_id) == sid),
+                            None
+                        )
+                        if sid not in ai_confidences or best_sim > ai_confidences[sid]:
+                            ai_confidences[sid] = round(best_sim, 4)
+                            detected_student_ids.add(sid)
+                        face_boxes.append({
+                            "bbox": bbox,          # [x1,y1,x2,y2] in original image coords
+                            "matched": True,
+                            "student_id": sid,
+                            "student_name": matched_row.student_name if matched_row else "Unknown",
+                            "roll_no": matched_row.roll_no if matched_row else "",
+                            "confidence": round(best_sim, 3),
+                        })
+                    else:
+                        face_boxes.append({
+                            "bbox": bbox,
+                            "matched": False,
+                            "student_id": None,
+                            "student_name": None,
+                            "roll_no": None,
+                            "confidence": round(best_sim, 3),
+                        })
             except Exception as e:
                 print(f"[AI] Recognition error on image: {e}")
-                # continue with other images
+
+            image_annotations.append(face_boxes)
 
     else:
-        # ── Mock fallback ─────────────────────────────────────────────────
-        # Read all files for previews only
+        # Mock fallback — read all files for HQ previews
         total_size = 0
         for upload in files:
             raw = await upload.read()
             total_size += len(raw)
             try:
-                from PIL import Image
+                from PIL import Image as PILImage
                 import io as _io
-                img_pil = Image.open(_io.BytesIO(raw)).convert("RGB")
-                img_pil.thumbnail((480, 360))
+                img_pil = PILImage.open(_io.BytesIO(raw)).convert("RGB")
+                max_w = 960
+                if img_pil.width > max_w:
+                    ratio = max_w / img_pil.width
+                    img_pil = img_pil.resize(
+                        (max_w, int(img_pil.height * ratio)),
+                        PILImage.LANCZOS
+                    )
                 buf = _io.BytesIO()
-                img_pil.save(buf, format="JPEG", quality=60)
+                img_pil.save(buf, format="JPEG", quality=85)
                 b64 = base64.b64encode(buf.getvalue()).decode()
                 image_previews.append(f"data:image/jpeg;base64,{b64}")
+                image_annotations.append([])   # no annotation in mock mode
             except Exception:
                 pass
 
@@ -505,11 +564,11 @@ async def take_attendance_ai(
         warning = None
     elif model_available and no_embeddings:
         mode    = "mock_no_embeddings"
-        warning = "⚠ No face photos registered for students in this class. Go to Admin → Faces tab and register Front, Left, Right photos for each student first."
+        warning = "⚠ No face photos registered for students. Go to Admin → Faces and register Front, Left, Right photos for each student."
     elif not model_available:
         load_err = face_service.load_error or "unknown"
         mode    = "mock_model_loading"
-        warning = f"⚠ AI model failed to load: {load_err}. The server may be out of memory or insightface install is broken."
+        warning = f"⚠ AI model failed to load: {load_err}."
     else:
         mode    = "mock"
         warning = "⚠ Using estimated attendance — register student faces for accurate AI results."
@@ -520,7 +579,9 @@ async def take_attendance_ai(
         "warning": warning,
         "images_processed": len(image_previews),
         "image_previews": image_previews,
-        "detected_faces": present_count,
+        "image_annotations": image_annotations,   # NEW: per-face bbox + match data
+        "detected_faces": sum(len(a) for a in image_annotations) if use_ai else present_count,
+        "matched_faces": present_count,
         "total_students": len(rec_rows),
         "detection_results": detection_results,
     }

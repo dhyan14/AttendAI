@@ -19,32 +19,15 @@ import asyncio
 import concurrent.futures
 from typing import Optional
 
-
-# ─── Tunable constants ────────────────────────────────────────────────────────
-
-# Detection: input image fed to SCRFD detector
-# 640×640 detects faces down to ~8px (far away), 320×320 only down to ~16px
-DET_SIZE = (640, 640)
-
-# Minimum detection confidence (lower = catch more small/far faces, more FPs)
-DET_SCORE_THRESH = 0.35     # default insightface uses 0.5 — we go lower for distance
-
-# Cosine similarity threshold for recognition match (ArcFace normed embeddings)
-# 0.45 → very high precision, few false matches at expense of more misses
-# 0.35 → better recall for partial/side-angle faces at distance
-MATCH_THRESHOLD = 0.40
-
-# Tiled detection: split image into N×N tiles with this overlap fraction
-TILE_OVERLAP = 0.20     # 20% overlap between adjacent tiles
-TILE_ROWS    = 2        # 2×2 grid = 4 tiles — good for typical wide classroom shot
-TILE_COLS    = 3
-
-# Upscale factor applied before tiled detection (catches tiny distant faces)
-# 2.0 → double resolution → faces that were 10px become 20px → detectable
-UPSCALE_FACTOR = 2.0
-
-# Max width to feed to detector (avoid OOM on huge photos)
+# ─── Module-level constants (importable by other modules) ─────────────────────
+MATCH_THRESHOLD = 0.40          # cosine similarity threshold for recognition match
+DET_SIZE = (640, 640)           # SCRFD detector input resolution
+DET_SCORE_THRESH = 0.35         # minimum detection confidence (lower = catch more small faces)
+UPSCALE_FACTOR = 2.0            # upscale before tiled detection
 MAX_DET_WIDTH = 2560
+TILE_ROWS, TILE_COLS = 2, 3
+TILE_OVERLAP = 0.20
+
 
 
 class FaceService:
