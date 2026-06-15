@@ -30,6 +30,8 @@ export default function LoginPage() {
       localStorage.setItem("refresh_token", data.refresh_token);
       localStorage.setItem("user_role", data.role);
       localStorage.setItem("user_id", data.user_id);
+      // Cookie so Next.js edge middleware can read role for server-side redirects
+      document.cookie = `user_role=${data.role}; path=/; max-age=2592000; SameSite=Lax`;
 
       const routes: Record<string, string> = {
         faculty:    "/faculty/home",
