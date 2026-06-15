@@ -5,8 +5,9 @@ import { apiFetch } from "@/lib/api";
 import {
   Upload, Camera, Trash2, CheckCircle2, Loader2,
   ChevronLeft, ToggleLeft, ToggleRight, AlertTriangle,
-  Sparkles, Check, Hash, ZoomIn, X, Users, UserCheck, UserX,
+  Sparkles, Check, Hash, ZoomIn, ZoomOut, X, Users, UserCheck, UserX,
 } from "lucide-react";
+
 
 // ─── Types ──────────────────────────────────────────────────
 interface Subject { id: string; name: string; code: string; dept_id: string; semester: number | null; }
@@ -82,6 +83,58 @@ function AnnotatedPhoto({
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
+  // Zoom & Pan states for Lightbox
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStart = useRef({ x: 0, y: 0 });
+  const panStart = useRef({ x: 0, y: 0 });
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !onClose) return;
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.15 : 0.85;
+      setZoom(prev => {
+        const z = Math.max(1, Math.min(prev * factor, 5));
+        if (z === 1) setPan({ x: 0, y: 0 });
+        return z;
+      });
+    };
+
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      canvas.removeEventListener("wheel", onWheel);
+    };
+  }, [onClose]);
+
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (zoom <= 1 || !onClose) return;
+    setIsDragging(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragStart.current = { x: e.clientX, y: e.clientY };
+    panStart.current = { ...pan };
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (!isDragging) return;
+    const dx = e.clientX - dragStart.current.x;
+    const dy = e.clientY - dragStart.current.y;
+    setPan({
+      x: panStart.current.x + dx / zoom,
+      y: panStart.current.y + dy / zoom,
+    });
+  };
+
+  const handlePointerUp = (e: React.PointerEvent) => {
+    if (isDragging) {
+      setIsDragging(false);
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+  };
+
   useEffect(() => {
     if (!src) return;
     const canvas = canvasRef.current;
@@ -111,8 +164,12 @@ function AnnotatedPhoto({
         if (bw <= 0 || bh <= 0) continue;
 
         const color  = face.matched ? "#22d37a" : "#ff453a";
-        const lineW  = Math.max(3, Math.round(W / 200));  // scales with image size
-        const corner = Math.min(bw, bh) * 0.28;
+        
+        // Scale line width and corners dynamically by face size to keep them proportional
+        // and avoid thick blocks of color blocking small faces.
+        const lineW  = Math.max(1, Math.min(Math.round(bw / 35), 3));
+        const corner = Math.min(bw, bh) * 0.22;
+        const cornerLineW = lineW * 2.0;
 
         // ── Thin full rectangle ─────────────────────────────────
         ctx.strokeStyle = color;
@@ -122,10 +179,10 @@ function AnnotatedPhoto({
         ctx.globalAlpha = 1.0;
 
         // ── Bold corner brackets ────────────────────────────────
-        ctx.shadowColor = "rgba(0,0,0,0.9)";
-        ctx.shadowBlur = 6;
+        ctx.shadowColor = "rgba(0,0,0,0.5)";
+        ctx.shadowBlur = Math.max(2, Math.round(bw * 0.08));
         ctx.strokeStyle = color;
-        ctx.lineWidth = lineW * 2.5;
+        ctx.lineWidth = cornerLineW;
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
         ctx.beginPath();
@@ -140,24 +197,28 @@ function AnnotatedPhoto({
         ctx.stroke();
         ctx.shadowBlur = 0;
 
-        // ── Name label ──────────────────────────────────────────
-        const fontSize = Math.max(14, Math.round(W / 55));
+        // ── Name label (Make text font size small so it does not overlap, but readable when zoomed) ──
+        const fontSize = Math.max(7, Math.min(Math.round(bw * 0.16), 14));
         ctx.font = `700 ${fontSize}px -apple-system, sans-serif`;
         const label = face.matched
           ? `${face.roll_no || face.student_name}  ${Math.round(face.confidence * 100)}%`
           : `Unknown  ${Math.round(face.confidence * 100)}%`;
         const tw = ctx.measureText(label).width;
-        const px = 10, py = 6;
+        
+        // Scale padding and border radius with font size to keep it beautiful
+        const px = Math.max(2, Math.round(fontSize * 0.45));
+        const py = Math.max(1, Math.round(fontSize * 0.25));
         const tagH = fontSize + py * 2;
+        const radius = Math.max(2, Math.round(fontSize * 0.35));
+
         // Place above box if room, else below
         const tagY = y1 - tagH - 4 >= 0 ? y1 - tagH - 4 : y2 + 4;
         const tagX = Math.max(0, Math.min(x1, W - tw - px * 2));
 
         // Tag background
-        ctx.shadowColor = "rgba(0,0,0,0.6)";
-        ctx.shadowBlur = 4;
+        ctx.shadowColor = "rgba(0,0,0,0.4)";
+        ctx.shadowBlur = Math.max(2, Math.round(fontSize * 0.25));
         ctx.fillStyle = face.matched ? "rgba(34,211,122,0.95)" : "rgba(255,69,58,0.95)";
-        const radius = 6;
         ctx.beginPath();
         ctx.roundRect(tagX, tagY, tw + px * 2, tagH, radius);
         ctx.fill();
@@ -181,6 +242,74 @@ function AnnotatedPhoto({
         display: "flex", flexDirection: "column",
         alignItems: "center", justifyContent: "center",
       }}>
+        {/* Zoom controls */}
+        <div style={{
+          position: "absolute", top: 16, left: 16, zIndex: 10,
+          display: "flex", gap: 8,
+        }}>
+          <button
+            onClick={() => setZoom(prev => {
+              const z = Math.max(1, prev - 0.5);
+              if (z === 1) setPan({ x: 0, y: 0 });
+              return z;
+            })}
+            disabled={zoom <= 1}
+            style={{
+              width: 38, height: 38, borderRadius: 8,
+              background: "rgba(255,255,255,0.15)",
+              border: "1.5px solid rgba(255,255,255,0.3)",
+              color: "#fff", cursor: zoom <= 1 ? "not-allowed" : "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              backdropFilter: "blur(8px)",
+              opacity: zoom <= 1 ? 0.5 : 1,
+              transition: "all 0.2s",
+            }}
+          >
+            <ZoomOut size={16} />
+          </button>
+          <span style={{
+            display: "flex", alignItems: "center", justifyContent: "center",
+            padding: "0 10px", borderRadius: 8,
+            background: "rgba(0,0,0,0.6)",
+            border: "1.5px solid rgba(255,255,255,0.15)",
+            color: "#fff", fontSize: 12, fontWeight: 700,
+            backdropFilter: "blur(8px)", minWidth: 40,
+          }}>
+            {Math.round(zoom * 100)}%
+          </span>
+          <button
+            onClick={() => setZoom(prev => Math.min(5, prev + 0.5))}
+            disabled={zoom >= 5}
+            style={{
+              width: 38, height: 38, borderRadius: 8,
+              background: "rgba(255,255,255,0.15)",
+              border: "1.5px solid rgba(255,255,255,0.3)",
+              color: "#fff", cursor: zoom >= 5 ? "not-allowed" : "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              backdropFilter: "blur(8px)",
+              opacity: zoom >= 5 ? 0.5 : 1,
+              transition: "all 0.2s",
+            }}
+          >
+            <ZoomIn size={16} />
+          </button>
+          {zoom > 1 && (
+            <button
+              onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}
+              style={{
+                padding: "0 12px", height: 38, borderRadius: 8,
+                background: "rgba(255,255,255,0.15)",
+                border: "1.5px solid rgba(255,255,255,0.3)",
+                color: "#fff", cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                backdropFilter: "blur(8px)", fontSize: 11, fontWeight: 700,
+              }}
+            >
+              Reset
+            </button>
+          )}
+        </div>
+
         {/* Close */}
         <button
           onClick={onClose}
@@ -192,19 +321,35 @@ function AnnotatedPhoto({
             color: "#fff", cursor: "pointer",
             display: "flex", alignItems: "center", justifyContent: "center",
             backdropFilter: "blur(8px)",
+            transition: "all 0.2s",
           }}
         >
           <X size={22} />
         </button>
 
-        {/* Annotated canvas — fills screen */}
-        <canvas
-          ref={canvasRef}
-          style={{
-            maxWidth: "100vw", maxHeight: "100dvh",
-            objectFit: "contain", display: "block",
-          }}
-        />
+        {/* Annotated canvas — fills screen & supports zoom/drag */}
+        <div style={{
+          width: "100%", height: "100%",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          overflow: "hidden",
+          touchAction: "none",
+        }}>
+          <canvas
+            ref={canvasRef}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+            style={{
+              maxWidth: "100vw", maxHeight: "100dvh",
+              objectFit: "contain", display: "block",
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              transformOrigin: "center center",
+              transition: isDragging ? "none" : "transform 0.15s ease-out",
+              cursor: zoom > 1 ? (isDragging ? "grabbing" : "grab") : "default",
+            }}
+          />
+        </div>
 
         {/* Legend */}
         <div style={{
@@ -214,6 +359,7 @@ function AnnotatedPhoto({
           background: "rgba(0,0,0,0.75)", backdropFilter: "blur(12px)",
           padding: "10px 24px", borderRadius: 99,
           border: "1px solid rgba(255,255,255,0.15)",
+          pointerEvents: "none", // click through legend if zoom/drag is active
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: "#22d37a" }}>
             <div style={{ width: 14, height: 14, border: "2.5px solid #22d37a", borderRadius: 2 }} />
