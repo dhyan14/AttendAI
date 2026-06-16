@@ -5,15 +5,17 @@ Routes:
   POST   /face/register              Register 1 face image for a student (angle: front | left | right)
   GET    /face/student/{student_id}  List registered angles + thumbnail previews
   DELETE /face/embedding/{id}        Remove a specific registered angle
+  POST   /face/bulk-upload           Bulk register faces from a ZIP of roll_no folders
 """
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete as sql_delete
-from typing import Optional
+from typing import Optional, List
 import uuid
 import base64
 import io
+import zipfile
 
 from app.database import get_db
 from app.api.deps import get_current_user, require_dept_admin
@@ -208,6 +210,210 @@ async def delete_face_embedding(
     await db.commit()
 
     return {"message": f"Removed '{angle}' face registration for student {student_id}"}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# POST /face/bulk-upload
+# ──────────────────────────────────────────────────────────────────────────────
+
+SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
+ANGLE_ORDER    = ["front", "left", "right"]
+
+
+@router.post("/bulk-upload")
+async def bulk_upload_faces(
+    dept_id: str          = Form(..., description="Department UUID to scope student lookup"),
+    zip_file: UploadFile  = File(..., description="ZIP containing roll_no-named folders with 3 images each"),
+    db: AsyncSession      = Depends(get_db),
+    current_user: User    = Depends(require_dept_admin),
+):
+    """
+    Bulk register faces from a ZIP file.
+
+    ZIP structure expected:
+      CS001/           ← folder name = student roll_no
+        any1.jpg       ← sorted alphabetically → front
+        any2.jpg       ← sorted alphabetically → left
+        any3.jpg       ← sorted alphabetically → right
+      CS002/
+        ...
+
+    - Top-level folders only (sub-folders are ignored)
+    - Images sorted alphabetically; 1st=front, 2nd=left, 3rd=right
+    - Partial registration allowed (< 3 images = registers available angles)
+    - Supported extensions: .jpg, .jpeg, .png, .webp
+    """
+    # ── Validate ZIP ──────────────────────────────────────────────────────────
+    if not zip_file.filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="File must be a .zip archive")
+
+    zip_bytes = await zip_file.read()
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="Invalid or corrupted ZIP file")
+
+    # ── Ensure face model is ready ────────────────────────────────────────────
+    if not face_service.initialized:
+        try:
+            await face_service.initialize()
+        except Exception as e:
+            print(f"[BulkUpload] Lazy init failed: {e}")
+
+    if not face_service.initialized:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"⚠ Face recognition model is not loaded yet. "
+                f"Please wait 30–60 seconds and try again. "
+                f"Error: {face_service.load_error or 'Unknown'}"
+            ),
+        )
+
+    # ── Validate dept_id ──────────────────────────────────────────────────────
+    try:
+        dept_uuid = uuid.UUID(dept_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid dept_id UUID format")
+
+    # ── Build roll_no → Student map ───────────────────────────────────────────
+    from app.models import Department
+    res = await db.execute(
+        select(Student).where(Student.dept_id == dept_uuid)
+    )
+    all_students = res.scalars().all()
+    student_map: dict[str, Student] = {
+        s.roll_no.strip().lower(): s for s in all_students
+    }
+
+    # ── Parse ZIP: collect folders and their images ───────────────────────────
+    # Build: { folder_name: sorted list of ZipInfo entries for image files }
+    folder_images: dict[str, list] = {}
+    for info in zf.infolist():
+        if info.is_dir():
+            continue
+        parts = info.filename.replace("\\", "/").split("/")
+        # Only handle top-level folder entries: folder/image.jpg
+        if len(parts) != 2:
+            continue
+        folder_name, filename = parts
+        ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        if ext not in SUPPORTED_EXTS:
+            continue
+        if folder_name not in folder_images:
+            folder_images[folder_name] = []
+        folder_images[folder_name].append(info)
+
+    # Sort images inside each folder alphabetically by filename
+    for folder_name in folder_images:
+        folder_images[folder_name].sort(key=lambda x: x.filename.split("/")[-1].lower())
+
+    # ── Process each folder ───────────────────────────────────────────────────
+    total_folders       = len(folder_images)
+    matched_students    = 0
+    unmatched_folders   = 0
+    total_angles_reg    = 0
+    student_results: List[dict] = []
+    all_errors: List[dict]      = []
+
+    for folder_name, image_infos in folder_images.items():
+        roll_key = folder_name.strip().lower()
+        student  = student_map.get(roll_key)
+
+        if student is None:
+            unmatched_folders += 1
+            student_results.append({
+                "roll_no":          folder_name,
+                "name":             None,
+                "status":           "unmatched",
+                "angles_registered": [],
+            })
+            continue
+
+        matched_students += 1
+        angles_registered: list[str] = []
+        stu_uuid = student.id
+
+        for idx, img_info in enumerate(image_infos[:3]):  # max 3 images
+            angle = ANGLE_ORDER[idx]
+            try:
+                image_bytes = zf.read(img_info.filename)
+                if not image_bytes:
+                    all_errors.append({
+                        "roll_no": folder_name, "angle": angle,
+                        "reason": "Empty image file",
+                    })
+                    continue
+
+                # Extract embedding
+                embedding = face_service.get_embedding_single(image_bytes)
+                if embedding is None:
+                    all_errors.append({
+                        "roll_no": folder_name, "angle": angle,
+                        "reason": "No face detected in image",
+                    })
+                    continue
+
+                # Generate thumbnail
+                thumbnail = _make_thumbnail_b64(image_bytes)
+
+                # Upsert: delete existing same-angle, insert new
+                await db.execute(
+                    sql_delete(FaceEmbedding).where(
+                        FaceEmbedding.student_id == stu_uuid,
+                        FaceEmbedding.angle == angle,
+                    )
+                )
+                fe = FaceEmbedding(
+                    student_id=stu_uuid,
+                    embedding=embedding,
+                    image_url=thumbnail,
+                    angle=angle,
+                )
+                db.add(fe)
+                angles_registered.append(angle)
+                total_angles_reg += 1
+
+            except Exception as e:
+                all_errors.append({
+                    "roll_no": folder_name, "angle": angle,
+                    "reason": str(e),
+                })
+
+        # Flush per-student so partial failures don't roll back other students
+        try:
+            await db.flush()
+        except Exception as e:
+            await db.rollback()
+            all_errors.append({
+                "roll_no": folder_name, "angle": "all",
+                "reason": f"DB flush error: {str(e)}",
+            })
+            angles_registered = []
+            total_angles_reg -= len(angles_registered)
+
+        status = (
+            "success" if len(angles_registered) == 3
+            else "partial" if len(angles_registered) > 0
+            else "failed"
+        )
+        student_results.append({
+            "roll_no":           folder_name,
+            "name":              student.name,
+            "status":            status,
+            "angles_registered": angles_registered,
+        })
+
+    await db.commit()
+
+    return {
+        "total_folders":         total_folders,
+        "matched_students":      matched_students,
+        "unmatched_folders":     unmatched_folders,
+        "total_angles_registered": total_angles_reg,
+        "students":              student_results,
+        "errors":                all_errors,
+    }
 
 
 # ──────────────────────────────────────────────────────────────────────────────
