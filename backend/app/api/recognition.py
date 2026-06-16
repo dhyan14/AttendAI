@@ -292,14 +292,25 @@ async def bulk_upload_faces(
     for info in zf.infolist():
         if info.is_dir():
             continue
-        parts = info.filename.replace("\\", "/").split("/")
-        # Only handle top-level folder entries: folder/image.jpg
-        if len(parts) != 2:
+        
+        # Normalize path separators and filter empty parts
+        parts = [p for p in info.filename.replace("\\", "/").split("/") if p]
+        
+        # Skip macOS metadata or hidden files
+        if any(p.startswith(".") or p.startswith("__MACOSX") for p in parts):
             continue
-        folder_name, filename = parts
+            
+        # We need at least [folder_name, filename]
+        if len(parts) < 2:
+            continue
+            
+        filename = parts[-1]
+        folder_name = parts[-2]
+        
         ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
         if ext not in SUPPORTED_EXTS:
             continue
+            
         if folder_name not in folder_images:
             folder_images[folder_name] = []
         folder_images[folder_name].append(info)
@@ -334,63 +345,65 @@ async def bulk_upload_faces(
         angles_registered: list[str] = []
         stu_uuid = student.id
 
-        for idx, img_info in enumerate(image_infos[:3]):  # max 3 images
-            angle = ANGLE_ORDER[idx]
-            try:
-                image_bytes = zf.read(img_info.filename)
-                if not image_bytes:
-                    all_errors.append({
-                        "roll_no": folder_name, "angle": angle,
-                        "reason": "Empty image file",
-                    })
-                    continue
-
-                # Extract embedding
-                embedding = face_service.get_embedding_single(image_bytes)
-                if embedding is None:
-                    all_errors.append({
-                        "roll_no": folder_name, "angle": angle,
-                        "reason": "No face detected in image",
-                    })
-                    continue
-
-                # Generate thumbnail
-                thumbnail = _make_thumbnail_b64(image_bytes)
-
-                # Upsert: delete existing same-angle, insert new
-                await db.execute(
-                    sql_delete(FaceEmbedding).where(
-                        FaceEmbedding.student_id == stu_uuid,
-                        FaceEmbedding.angle == angle,
-                    )
-                )
-                fe = FaceEmbedding(
-                    student_id=stu_uuid,
-                    embedding=embedding,
-                    image_url=thumbnail,
-                    angle=angle,
-                )
-                db.add(fe)
-                angles_registered.append(angle)
-                total_angles_reg += 1
-
-            except Exception as e:
-                all_errors.append({
-                    "roll_no": folder_name, "angle": angle,
-                    "reason": str(e),
-                })
-
-        # Flush per-student so partial failures don't roll back other students
+        # Use a nested transaction (SAVEPOINT) so failures on one student
+        # do not roll back successfully registered students.
         try:
-            await db.flush()
+            async with db.begin_nested():
+                for idx, img_info in enumerate(image_infos[:3]):  # max 3 images
+                    angle = ANGLE_ORDER[idx]
+                    try:
+                        image_bytes = zf.read(img_info.filename)
+                        if not image_bytes:
+                            all_errors.append({
+                                "roll_no": folder_name, "angle": angle,
+                                "reason": "Empty image file",
+                            })
+                            continue
+
+                        # Extract embedding
+                        embedding = face_service.get_embedding_single(image_bytes)
+                        if embedding is None:
+                            all_errors.append({
+                                "roll_no": folder_name, "angle": angle,
+                                "reason": "No face detected in image",
+                            })
+                            continue
+
+                        # Generate thumbnail
+                        thumbnail = _make_thumbnail_b64(image_bytes)
+
+                        # Upsert: delete existing same-angle, insert new
+                        await db.execute(
+                            sql_delete(FaceEmbedding).where(
+                                FaceEmbedding.student_id == stu_uuid,
+                                FaceEmbedding.angle == angle,
+                            )
+                        )
+                        fe = FaceEmbedding(
+                            student_id=stu_uuid,
+                            embedding=embedding,
+                            image_url=thumbnail,
+                            angle=angle,
+                        )
+                        db.add(fe)
+                        angles_registered.append(angle)
+                        total_angles_reg += 1
+
+                    except Exception as e:
+                        all_errors.append({
+                            "roll_no": folder_name, "angle": angle,
+                            "reason": str(e),
+                        })
+                # Flush the savepoint changes to database
+                await db.flush()
         except Exception as e:
-            await db.rollback()
+            # Savepoint automatically rolled back by the context manager
             all_errors.append({
                 "roll_no": folder_name, "angle": "all",
-                "reason": f"DB flush error: {str(e)}",
+                "reason": f"Database savepoint error: {str(e)}",
             })
-            angles_registered = []
             total_angles_reg -= len(angles_registered)
+            angles_registered = []
 
         status = (
             "success" if len(angles_registered) == 3
