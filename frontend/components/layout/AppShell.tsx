@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   Home, Users, User, Building2, FileText, Camera, BookOpen,
@@ -20,11 +20,10 @@ interface NavItem {
 
 /* ─── Nav Configs ────────────────────────────────────────── */
 const superAdminNav: NavItem[] = [
-  { href: "/super/dashboard", label: "Dashboard",    icon: <Globe size={20} /> },
-  { href: "/super/orgs",      label: "Organizations",icon: <Building2 size={20} /> },
-  { href: "/super/users",     label: "User Mgmt",    icon: <UserCog size={20} /> },
-  { href: "/super/audit",     label: "Audit Logs",   icon: <Activity size={20} /> },
-  { href: "/super/settings",  label: "Settings",     icon: <Settings size={20} /> },
+  { href: "/super/dashboard",              label: "Overview",      icon: <Activity size={20} /> },
+  { href: "/super/dashboard?s=orgs",       label: "Organizations", icon: <Globe size={20} /> },
+  { href: "/super/dashboard?s=users",      label: "Users",         icon: <Users size={20} /> },
+  { href: "/super/dashboard?s=settings",   label: "Settings",      icon: <Settings size={20} /> },
 ];
 
 const orgAdminNav: NavItem[] = [
@@ -87,10 +86,10 @@ function getBottomNav(role: AppRole): NavItem[] {
   switch (role) {
     case "super_admin":
       return [
-        { href: "/super/dashboard", label: "Dashboard", icon: <Globe size={22} /> },
-        { href: "/super/orgs",      label: "Orgs",      icon: <Building2 size={22} /> },
-        { href: "/super/users",     label: "Users",     icon: <UserCog size={22} /> },
-        { href: "/super/settings",  label: "Settings",  icon: <Settings size={22} /> },
+        { href: "/super/dashboard",              label: "Home",    icon: <Activity size={22} /> },
+        { href: "/super/dashboard?s=orgs",       label: "Orgs",    icon: <Globe size={22} /> },
+        { href: "/super/dashboard?s=users",      label: "Users",   icon: <Users size={22} /> },
+        { href: "/super/dashboard?s=settings",   label: "Settings",icon: <Settings size={22} /> },
       ];
     case "org_admin":
       return [
@@ -134,8 +133,22 @@ function Sidebar({
   role: AppRole; email: string; onLogout: () => void;
 }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const navItems = getNav(role);
   const initial = email?.[0]?.toUpperCase() ?? "?";
+
+  // For super_admin, active section is determined by ?s= query param
+  const currentSection = searchParams.get("s") || "overview";
+
+  function isItemActive(item: NavItem): boolean {
+    const [itemPath, itemQuery] = item.href.split("?");
+    if (!pathname.startsWith(itemPath)) return false;
+    if (role === "super_admin") {
+      const itemSection = new URLSearchParams(itemQuery || "").get("s") || "overview";
+      return itemSection === currentSection;
+    }
+    return !(item.href === "/faculty/attendance" && pathname === "/faculty/attendance/take");
+  }
 
   return (
     <aside className="app-sidebar">
@@ -164,10 +177,7 @@ function Sidebar({
       {/* Nav items */}
       <nav className="sidebar-nav">
         {navItems.map((item) => {
-          const isActive = item.href === "/super/dashboard"
-            ? pathname === item.href || pathname.startsWith("/super/dashboard")
-            : pathname.startsWith(item.href) &&
-              !(item.href === "/faculty/attendance" && pathname === "/faculty/attendance/take");
+          const isActive = isItemActive(item);
 
           if (item.fab) {
             return (
@@ -186,7 +196,7 @@ function Sidebar({
             <Link
               key={item.href}
               href={item.href}
-              className={`sidebar-nav-item${isActive ? " active" : ""}`}
+              className={`sidebar-nav-item${isItemActive(item) ? " active" : ""}`}
             >
               <span className="nav-icon">{item.icon}</span>
               {item.label}

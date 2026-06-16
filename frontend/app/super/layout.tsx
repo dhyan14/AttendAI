@@ -27,5 +27,8 @@ export default function SuperLayout({ children }: { children: React.ReactNode })
     );
   }
 
+  // Super admin uses AppShell for the left sidebar on desktop.
+  // AppShell's BottomNavBar is suppressed for super_admin — the dashboard has its own section-switcher nav.
   return <AppShell role="super_admin">{children}</AppShell>;
 }
+
