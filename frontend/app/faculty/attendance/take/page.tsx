@@ -410,7 +410,7 @@ export default function TakeAttendancePage() {
         return;
       }
       const data = await res.json();
-      setLecture({
+      const loadedLec = {
         id: data.id,
         subject_name: data.subject_name,
         subject_code: data.subject_code,
@@ -421,7 +421,14 @@ export default function TakeAttendancePage() {
         status: data.status,
         total_students: data.records.length,
         present_count: data.records.filter((r: any) => r.status === "present").length,
-      });
+      };
+      setLecture(loadedLec);
+
+      // Pre-populate fields in case we stay in Step 1
+      setLecNo(data.lecture_no.toString());
+      setDivision(data.division);
+      setBatch(data.batch || "All");
+      setLecDate(data.date);
 
       const init: Record<string, boolean> = {};
       data.records.forEach((r: any) => {
@@ -429,26 +436,30 @@ export default function TakeAttendancePage() {
       });
       setOverrides(init);
 
-      setAiResult({
-        ai_used: true,
-        mode: "real_ai",
-        warning: null,
-        images_processed: data.classroom_image_urls?.length ?? 0,
-        image_previews: data.classroom_image_urls ?? [],
-        image_annotations: Array((data.classroom_image_urls ?? []).length).fill([]),
-        detected_faces: data.records.filter((r: any) => r.status === "present").length,
-        matched_faces: data.records.filter((r: any) => r.status === "present").length,
-        total_students: data.records.length,
-        detection_results: data.records.map((r: any) => ({
-          student_id: r.student_id,
-          student_name: r.student_name,
-          roll_no: r.roll_no,
-          status: r.status,
-          confidence: r.confidence ?? 1.0,
-        })),
-      });
-
-      setStep(3);
+      const hasImages = data.classroom_image_urls && data.classroom_image_urls.length > 0;
+      if (data.status === "finalized" || hasImages) {
+        setAiResult({
+          ai_used: true,
+          mode: "real_ai",
+          warning: null,
+          images_processed: data.classroom_image_urls?.length ?? 0,
+          image_previews: data.classroom_image_urls ?? [],
+          image_annotations: Array((data.classroom_image_urls ?? []).length).fill([]),
+          detected_faces: data.records.filter((r: any) => r.status === "present").length,
+          matched_faces: data.records.filter((r: any) => r.status === "present").length,
+          total_students: data.records.length,
+          detection_results: data.records.map((r: any) => ({
+            student_id: r.student_id,
+            student_name: r.student_name,
+            roll_no: r.roll_no,
+            status: r.status,
+            confidence: r.confidence ?? 1.0,
+          })),
+        });
+        setStep(3);
+      } else {
+        setStep(1);
+      }
     } catch (err) {
       console.error(err);
       showToast("✗ Error loading existing lecture");
@@ -469,6 +480,14 @@ export default function TakeAttendancePage() {
       loadExistingLecture(lecId);
     }
   }, [loadExistingLecture]);
+
+  // Pre-select subject once subjects list is loaded
+  useEffect(() => {
+    if (lecture && subjects.length > 0 && !selSubject) {
+      const match = subjects.find(s => s.code === lecture.subject_code);
+      if (match) setSelSubject(match);
+    }
+  }, [subjects, lecture, selSubject]);
 
   // ── Photo helpers ─────────────────────────────────────────
   const addPhotos = (files: FileList | null) => {
@@ -515,30 +534,32 @@ export default function TakeAttendancePage() {
     if (!division) { showToast("✗ Please select a division"); return; }
 
     setCreating(true);
-    let lec: Lecture;
-    try {
-      const r = await apiFetch("/attendance/lectures", {
-        method: "POST",
-        body: JSON.stringify({
-          subject_id: selSubject.id,
-          division: division.trim().toUpperCase(),
-          batch: batch || "All",
-          lecture_no: parseInt(lecNo, 10),
-          date: lecDate,
-        }),
-      });
-      if (!r.ok) {
-        const e = await r.json();
-        showToast("✗ " + (e.detail || "Failed to create lecture"));
+    let lec: Lecture = lecture as Lecture;
+    if (!lec) {
+      try {
+        const r = await apiFetch("/attendance/lectures", {
+          method: "POST",
+          body: JSON.stringify({
+            subject_id: selSubject.id,
+            division: division.trim().toUpperCase(),
+            batch: batch || "All",
+            lecture_no: parseInt(lecNo, 10),
+            date: lecDate,
+          }),
+        });
+        if (!r.ok) {
+          const e = await r.json();
+          showToast("✗ " + (e.detail || "Failed to create lecture"));
+          setCreating(false);
+          return;
+        }
+        lec = await r.json();
+        setLecture(lec);
+      } catch {
+        showToast("✗ Network error creating lecture");
         setCreating(false);
         return;
       }
-      lec = await r.json();
-      setLecture(lec);
-    } catch {
-      showToast("✗ Network error creating lecture");
-      setCreating(false);
-      return;
     }
     setCreating(false);
 
