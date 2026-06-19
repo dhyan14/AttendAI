@@ -88,104 +88,132 @@ export default function StudentAttendancePage() {
     <div className="page-content" style={{ paddingBottom: 100 }}>
       <TopBar title="My Attendance" />
 
-      {/* Calendar */}
-      <div className="card" style={{ marginBottom: 20 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-          <button onClick={prevMonth} style={{ background: "none", border: "none", color: "var(--text-primary)", cursor: "pointer" }}>
-            <ChevronLeft size={22} />
-          </button>
-          <span style={{ fontWeight: 600, fontSize: 16 }}>{MONTHS[month]} {year}</span>
-          <button onClick={nextMonth} style={{ background: "none", border: "none", color: "var(--text-primary)", cursor: "pointer" }}>
-            <ChevronRight size={22} />
-          </button>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 8 }}>
-          {DAYS.map(d => <div key={d} style={{ textAlign: "center", fontSize: 11, color: "var(--text-secondary)", fontWeight: 500 }}>{d}</div>)}
-        </div>
-        
-        {loading ? (
-          <div style={{ display: "flex", justifyContent: "center", padding: "24px 0" }}>
-            <Loader2 className="animate-spin" size={24} style={{ color: "var(--accent)", animation: "spin 1s linear infinite" }} />
-          </div>
-        ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
-            {cells.map((day, i) => {
-              if (!day) return <div key={i} />;
-              const key = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-              const status = statusForDay(day);
-              const isSel = key === selected;
-              return (
-                <button 
-                  key={i} 
-                  onClick={() => setSelected(key)} 
-                  style={{
-                    aspectRatio: "1", borderRadius: 99, border: "none", cursor: "pointer",
-                    fontSize: 13, fontWeight: isSel ? 700 : 400, transition: "all 0.15s",
-                    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                    background: isSel ? "var(--accent)" :
-                      status === "present" ? "var(--success-dim)" :
-                      status === "absent" ? "var(--danger-dim)" :
-                      status === "mixed" ? "var(--warning-dim)" : "transparent",
-                    color: isSel ? "white" :
-                      status === "present" ? "var(--success)" :
-                      status === "absent" ? "var(--danger)" :
-                      status === "mixed" ? "var(--warning)" : "var(--text-primary)",
-                  }}
-                >
-                  {day}
-                </button>
-              );
-            })}
-          </div>
-        )}
+      <div className="history-layout">
+        {/* Left Side: Calendar */}
+        <div className="calendar-card-wrap">
+          <div className="card" style={{ padding: 16 }}>
+            {/* Month Switcher */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+              <button onClick={prevMonth} style={{ background: "none", border: "none", color: "var(--text-primary)", cursor: "pointer" }}>
+                <ChevronLeft size={22} />
+              </button>
+              <span style={{ fontWeight: 600, fontSize: 16 }}>{MONTHS[month]} {year}</span>
+              <button onClick={nextMonth} style={{ background: "none", border: "none", color: "var(--text-primary)", cursor: "pointer" }}>
+                <ChevronRight size={22} />
+              </button>
+            </div>
 
-        {/* Legend */}
-        <div style={{ display: "flex", gap: 12, marginTop: 14, justifyContent: "center", flexWrap: "wrap" }}>
-          {[["var(--success)", "Present"], ["var(--danger)", "Absent"], ["var(--warning)", "Mixed"]].map(([c, l]) => (
-            <span key={l} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--text-secondary)" }}>
-              <span style={{ width: 10, height: 10, borderRadius: 99, background: c, display: "inline-block" }} />{l}
-            </span>
-          ))}
+            {/* Day Headers */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 8 }}>
+              {DAYS.map(d => <div key={d} style={{ textAlign: "center", fontSize: 11, color: "var(--text-secondary)", fontWeight: 500 }}>{d}</div>)}
+            </div>
+            
+            {/* Calendar Grid */}
+            {loading ? (
+              <div style={{ display: "flex", justifyContent: "center", padding: "24px 0" }}>
+                <Loader2 className="animate-spin" size={24} style={{ color: "var(--accent)", animation: "spin 1s linear infinite" }} />
+              </div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+                {cells.map((day, i) => {
+                  if (!day) return <div key={i} />;
+                  const key = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+                  const status = statusForDay(day);
+                  const isSel = key === selected;
+                  return (
+                    <button 
+                      key={i} 
+                      onClick={() => setSelected(key)} 
+                      style={{
+                        aspectRatio: "1", borderRadius: 99, border: "none", cursor: "pointer",
+                        fontSize: 13, fontWeight: isSel ? 700 : 400, transition: "all 0.15s",
+                        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                        background: isSel ? "var(--accent)" :
+                          status === "present" ? "var(--success-dim)" :
+                          status === "absent" ? "var(--danger-dim)" :
+                          status === "mixed" ? "var(--warning-dim)" : "transparent",
+                        color: isSel ? "white" :
+                          status === "present" ? "var(--success)" :
+                          status === "absent" ? "var(--danger)" :
+                          status === "mixed" ? "var(--warning)" : "var(--text-primary)",
+                      }}
+                    >
+                      {day}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Legend */}
+            <div style={{ display: "flex", gap: 12, marginTop: 14, justifyContent: "center", flexWrap: "wrap" }}>
+              {[["var(--success)", "Present"], ["var(--danger)", "Absent"], ["var(--warning)", "Mixed"]].map(([c, l]) => (
+                <span key={l} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--text-secondary)" }}>
+                  <span style={{ width: 10, height: 10, borderRadius: 99, background: c, display: "inline-block" }} />{l}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Right Side: Selected Day Records */}
+        <div className="lectures-wrap">
+          {data ? (
+            <>
+              <div className="section-header" style={{ marginBottom: 12 }}>
+                <span style={{ fontSize: 15, fontWeight: 600 }}>
+                  {new Date(selected).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}
+                </span>
+                <span className="badge badge-accent" style={{ marginLeft: 8 }}>{data.length} Lecture{data.length > 1 ? "s" : ""}</span>
+              </div>
+              {data.map((l, i) => (
+                <div key={i} className={`lecture-card ${l.status === "absent" ? "absent" : ""}`} style={{ marginBottom: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>🕐 {l.time}</span>
+                    <span className={`badge ${l.status === "present" ? "badge-present" : "badge-absent"}`}>
+                      {l.status === "present" ? "Present" : "Absent"}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontWeight: 600, fontSize: 15 }}>{l.subject}</span>
+                    {l.confidence && (
+                      <span className="badge badge-muted" style={{ fontSize: 11 }}>
+                        {Math.round(l.confidence * 100)}% Match
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </>
+          ) : (
+            !loading && (
+              <div className="card" style={{ textAlign: "center", padding: "40px 16px", color: "var(--text-muted)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ fontSize: 40, marginBottom: 12 }}>📅</div>
+                <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>
+                  {new Date(selected).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}
+                </div>
+                <p style={{ fontSize: 13, color: "var(--text-secondary)" }}>No lectures recorded on this day</p>
+              </div>
+            )
+          )}
         </div>
       </div>
 
-      {/* Selected Day Records */}
-      {data ? (
-        <>
-          <div className="section-header" style={{ marginBottom: 12 }}>
-            <span style={{ fontSize: 15, fontWeight: 600 }}>
-              {new Date(selected).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}
-            </span>
-            <span className="badge badge-accent">{data.length} Lecture{data.length > 1 ? "s" : ""}</span>
-          </div>
-          {data.map((l, i) => (
-            <div key={i} className={`lecture-card ${l.status === "absent" ? "absent" : ""}`} style={{ marginBottom: 10 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>🕐 {l.time}</span>
-                <span className={`badge ${l.status === "present" ? "badge-present" : "badge-absent"}`}>
-                  {l.status === "present" ? "Present" : "Absent"}
-                </span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontWeight: 600, fontSize: 15 }}>{l.subject}</span>
-                {l.confidence && (
-                  <span className="badge badge-muted" style={{ fontSize: 11 }}>
-                    {Math.round(l.confidence * 100)}% Match
-                  </span>
-                )}
-              </div>
-            </div>
-          ))}
-        </>
-      ) : (
-        !loading && (
-          <div style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)" }}>
-            <div style={{ fontSize: 36, marginBottom: 8 }}>📅</div>
-            <p>No lectures recorded on this day</p>
-          </div>
-        )
-      )}
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <style>{`
+        .history-layout {
+          display: grid;
+          grid-template-columns: 1fr;
+          gap: 20px;
+          align-items: start;
+        }
+        @media (min-width: 900px) {
+          .history-layout {
+            grid-template-columns: 380px 1fr;
+            gap: 28px;
+          }
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+      `}</style>
     </div>
   );
 }
