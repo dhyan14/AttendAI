@@ -6,6 +6,7 @@ import {
   Home, Users, User, Building2, FileText, Camera, BookOpen,
   Calendar, BarChart3, Shield, Globe, Settings, LogOut,
   AlertTriangle, Loader2, GraduationCap, UserCog, Lock, Activity,
+  Cpu,
 } from "lucide-react";
 
 /* ─── Types ─────────────────────────────────────────────── */
@@ -137,7 +138,6 @@ function Sidebar({
   const navItems = getNav(role);
   const initial = email?.[0]?.toUpperCase() ?? "?";
 
-  // For super_admin, active section is determined by ?s= query param
   const currentSection = searchParams.get("s") || "overview";
 
   function isItemActive(item: NavItem): boolean {
@@ -155,7 +155,7 @@ function Sidebar({
       {/* Brand */}
       <div className="sidebar-brand">
         <div className="sidebar-brand-icon">
-          <Camera size={20} color="white" />
+          <Cpu size={20} color="#060a10" />
         </div>
         <div>
           <div className="sidebar-brand-text">AttendAI</div>
@@ -164,19 +164,24 @@ function Sidebar({
       </div>
 
       {/* Role badge */}
-      <div style={{ padding: "8px 20px 4px" }}>
+      <div style={{ padding: "8px 16px 4px" }}>
         <span style={{
-          fontSize: 10, fontWeight: 700, color: "var(--accent-2)",
-          background: "var(--accent-dim)", padding: "3px 10px",
-          borderRadius: 99, letterSpacing: 0.5,
+          fontSize: 9, fontWeight: 700, color: "var(--accent)",
+          background: "var(--accent-dim)",
+          border: "1px solid var(--border-accent)",
+          padding: "3px 10px",
+          borderRadius: 99, letterSpacing: 1.2,
+          fontFamily: "'JetBrains Mono', monospace",
+          textTransform: "uppercase",
+          boxShadow: "0 0 8px rgba(0,212,255,0.15)",
         }}>
           {ROLE_LABEL[role]}
         </span>
       </div>
 
       {/* Nav items */}
-      <nav className="sidebar-nav">
-        {navItems.map((item) => {
+      <nav className="sidebar-nav" style={{ marginTop: 8 }}>
+        {navItems.map((item, idx) => {
           const isActive = isItemActive(item);
 
           if (item.fab) {
@@ -185,6 +190,7 @@ function Sidebar({
                 key={item.href}
                 href={item.href}
                 className="sidebar-fab"
+                style={{ animationDelay: `${idx * 0.04}s` }}
               >
                 {item.icon}
                 {item.label}
@@ -197,6 +203,7 @@ function Sidebar({
               key={item.href}
               href={item.href}
               className={`sidebar-nav-item${isItemActive(item) ? " active" : ""}`}
+              style={{ animationDelay: `${idx * 0.04}s` }}
             >
               <span className="nav-icon">{item.icon}</span>
               {item.label}
@@ -204,6 +211,9 @@ function Sidebar({
           );
         })}
       </nav>
+
+      {/* Neon divider */}
+      <div className="neon-divider" style={{ margin: "12px 16px" }} />
 
       {/* Footer */}
       <div className="sidebar-footer">
