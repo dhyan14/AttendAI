@@ -104,7 +104,7 @@ export default function AdminReportsPage() {
 
     try {
       // 1. Fetch students for the department
-      let query = `/students?dept_id=${selectedDept}`;
+      let query = `/students/?dept_id=${selectedDept}`;
       if (selectedSem) query += `&semester=${selectedSem}`;
       const res = await apiFetch(query);
       if (!res.ok) throw new Error("Failed to fetch student list");

@@ -78,7 +78,7 @@ export default function AdminStudentsPage() {
     async function loadStudents() {
       setLoading(true);
       try {
-        let query = `/students?dept_id=${selectedDept}`;
+        let query = `/students/?dept_id=${selectedDept}`;
         if (division) query += `&division=${division}`;
         if (batch) query += `&batch=${batch}`;
         if (semester) query += `&semester=${semester}`;
@@ -130,7 +130,7 @@ export default function AdminStudentsPage() {
       setImportResult(result);
       setImportFile(null);
       // Reload students list
-      const reloadRes = await apiFetch(`/students?dept_id=${selectedDept}`);
+      const reloadRes = await apiFetch(`/students/?dept_id=${selectedDept}`);
       if (reloadRes.ok) setStudents(await reloadRes.json());
     } catch (err: any) {
       alert(err.message || "Error importing CSV");

@@ -63,7 +63,7 @@ export default function AdminFacultyPage() {
     async function loadFaculty() {
       setLoading(true);
       try {
-        const res = await apiFetch(`/faculty?dept_id=${selectedDept}`);
+        const res = await apiFetch(`/faculty/?dept_id=${selectedDept}`);
         if (res.ok) {
           const data = await res.json();
           setFacultyList(data);

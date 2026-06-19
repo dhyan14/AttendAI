@@ -32,7 +32,7 @@ export default function FacultyStudentsPage() {
             code: facData.dept_name.split(" ")[0], // abbreviation
           });
 
-          const studentsRes = await apiFetch(`/students?dept_id=${facData.dept_id}`);
+          const studentsRes = await apiFetch(`/students/?dept_id=${facData.dept_id}`);
           if (studentsRes.ok) {
             setStudents(await studentsRes.json());
           }
