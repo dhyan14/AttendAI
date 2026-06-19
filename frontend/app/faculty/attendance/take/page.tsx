@@ -1101,9 +1101,11 @@ export default function TakeAttendancePage() {
                 {/* Photos — show with baked annotations directly via <img>, no canvas redraw */}
                 {aiResult.image_previews.map((src, i) => {
                   // image_previews is already the full-quality annotated version
+                  // image_annotations will be empty for baked images — use global result stats
                   const annotations = aiResult.image_annotations?.[i] ?? [];
-                  const matched   = annotations.filter(a => a.matched).length;
-                  const unmatched = annotations.filter(a => !a.matched).length;
+                  const hasAnnotations = annotations.length > 0;
+                  const matched   = hasAnnotations ? annotations.filter(a => a.matched).length : aiResult.matched_faces;
+                  const unmatched = hasAnnotations ? annotations.filter(a => !a.matched).length : Math.max(0, aiResult.detected_faces - aiResult.matched_faces);
                   const total     = matched + unmatched;
                   return (
                     <div

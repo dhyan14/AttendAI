@@ -7,6 +7,7 @@ from datetime import datetime
 import uuid
 import base64
 import asyncio
+import io as _io
 
 from app.database import get_db
 from app.models import (
@@ -509,7 +510,6 @@ async def take_attendance_ai(
             Capped at 9 s via asyncio.wait_for.
             Returns (preview_b64: str, face_boxes_scaled: list[dict], annotated_original_b64: str)
             """
-            import io as _io
             from PIL import Image as PILImage
 
             preview_b64 = ""
@@ -601,15 +601,15 @@ async def take_attendance_ai(
             except Exception as e:
                 print(f"[AI] Recognition error: {e}")
 
-            # ── Annotate the ORIGINAL quality image ───────────────────────
+            # ── Annotate the ORIGINAL quality image (PNG = lossless, no compression) ───
             try:
                 img_annotated = draw_annotations_on_image(img_orig, face_boxes_orig)
                 buf_orig = _io.BytesIO()
-                img_annotated.save(buf_orig, format="JPEG", quality=95)
-                annotated_original_b64 = "data:image/jpeg;base64," + base64.b64encode(buf_orig.getvalue()).decode()
+                img_annotated.save(buf_orig, format="PNG", optimize=False)  # lossless, zero quality loss
+                annotated_original_b64 = "data:image/png;base64," + base64.b64encode(buf_orig.getvalue()).decode()
             except Exception as ae:
                 print(f"[AI] Original annotation error: {ae}")
-                # fallback to raw original base64
+                # fallback to raw original base64 (JPEG as-is, unchanged bytes)
                 annotated_original_b64 = "data:image/jpeg;base64," + base64.b64encode(raw).decode()
 
             return preview_b64, face_boxes_scaled, annotated_original_b64
@@ -641,14 +641,15 @@ async def take_attendance_ai(
         for raw in raw_images:
             total_size += len(raw)
             try:
-                # Save original unannotated image base64 directly to database
-                b64_orig = "data:image/jpeg;base64," + base64.b64encode(raw).decode()
+                # Store original image losslessly as PNG (no re-encode quality loss)
+                from PIL import Image as PILImage
+                img_pil = PILImage.open(_io.BytesIO(raw)).convert("RGB")
+                buf_png = _io.BytesIO()
+                img_pil.save(buf_png, format="PNG", optimize=False)
+                b64_orig = "data:image/png;base64," + base64.b64encode(buf_png.getvalue()).decode()
                 annotated_previews.append(b64_orig)
 
                 # Resized preview for frontend
-                import io as _io
-                from PIL import Image as PILImage
-                img_pil = PILImage.open(_io.BytesIO(raw)).convert("RGB")
                 max_w = 960
                 if img_pil.width > max_w:
                     ratio = max_w / img_pil.width
