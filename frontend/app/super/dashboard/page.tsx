@@ -166,13 +166,7 @@ export default function SuperDashboard() {
   const [selectedOrg, setSelectedOrg]     = useState<OrgDetail | null>(null);
   const [orgTab, setOrgTab]               = useState<OrgTab>("departments");
 
-  // Sync URL ?s= param → topSection
   const searchParams = useSearchParams();
-  useEffect(() => {
-    const s = searchParams.get("s") as TopSection | null;
-    const valid: TopSection[] = ["overview", "orgs", "users", "settings"];
-    setTopSection(s && valid.includes(s) ? s : "overview");
-  }, [searchParams]);
 
   // Dept drill-down
   const [selectedDept, setSelectedDept]   = useState<DeptRow | null>(null);
@@ -247,12 +241,12 @@ export default function SuperDashboard() {
   }
 
   /* ── Org drill-down loaders ──────────────────────────────── */
-  async function openOrg(org: OrgDetail) {
-    setSelectedOrg(org);
-    setOrgTab("departments");
-    setDepts([]); setFaculty([]); setStudents([]); setOrgAdmins([]);
-    fetchDepts(org.id);
-  }
+  const openOrg = useCallback((org: OrgDetail) => {
+    const params = new URLSearchParams(window.location.search);
+    params.set("orgId", org.id);
+    params.delete("deptId");
+    router.push(`/super/dashboard?${params.toString()}`);
+  }, [router]);
 
   async function fetchDepts(orgId: string) {
     setOrgDataLoading(true);
@@ -281,6 +275,56 @@ export default function SuperDashboard() {
     catch {} finally { setOrgDataLoading(false); }
   }
 
+  // Sync URL search parameters with dashboard state
+  useEffect(() => {
+    // 1. Sync topSection
+    const s = searchParams.get("s") as TopSection | null;
+    const valid: TopSection[] = ["overview", "orgs", "users", "settings"];
+    setTopSection(s && valid.includes(s) ? s : "overview");
+
+    // 2. Sync selectedOrg from URL query params
+    const orgId = searchParams.get("orgId");
+    if (!orgId) {
+      setSelectedOrg(null);
+      setSelectedDept(null);
+    } else if (stats) {
+      const org = stats.organizations.find(o => o.id === orgId);
+      if (org) {
+        if (selectedOrg?.id !== org.id) {
+          setSelectedOrg(org);
+          setOrgTab("departments");
+          setDepts([]);
+          setFaculty([]);
+          setStudents([]);
+          setOrgAdmins([]);
+          fetchDepts(org.id);
+        }
+      } else {
+        setSelectedOrg(null);
+        setSelectedDept(null);
+      }
+    }
+  }, [searchParams, stats, selectedOrg]);
+
+  // Sync selectedDept from URL query params
+  useEffect(() => {
+    const deptId = searchParams.get("deptId");
+    if (deptId && depts.length > 0) {
+      const dept = depts.find(d => d.id === deptId);
+      if (dept) {
+        if (selectedDept?.id !== dept.id) {
+          setSelectedDept(dept);
+          setSelectedSemester(null);
+          setSubjects([]);
+        }
+      } else {
+        setSelectedDept(null);
+      }
+    } else if (!deptId) {
+      setSelectedDept(null);
+    }
+  }, [searchParams, depts, selectedDept]);
+
   function switchOrgTab(tab: OrgTab) {
     setOrgTab(tab);
     if (!selectedOrg) return;
@@ -291,11 +335,11 @@ export default function SuperDashboard() {
   }
 
   /* ── Dept / Semester / Subject drill-down ────────────────── */
-  async function openDept(dept: DeptRow) {
-    setSelectedDept(dept);
-    setSelectedSemester(null);
-    setSubjects([]);
-  }
+  const openDept = useCallback((dept: DeptRow) => {
+    const params = new URLSearchParams(window.location.search);
+    params.set("deptId", dept.id);
+    router.push(`/super/dashboard?${params.toString()}`);
+  }, [router]);
 
   async function openSemester(sem: number) {
     if (!selectedDept) return;
@@ -399,7 +443,12 @@ export default function SuperDashboard() {
     try {
       await api(`/admin/orgs/${id}`, { method: "DELETE" });
       showToast(`✓ "${name}" deleted`); loadStats();
-      if (selectedOrg?.id === id) setSelectedOrg(null);
+      if (selectedOrg?.id === id) {
+        const params = new URLSearchParams(window.location.search);
+        params.delete("orgId");
+        params.delete("deptId");
+        router.push(`/super/dashboard?${params.toString()}`);
+      }
     } catch (err: any) { showToast("✗ " + err.message); }
   }
 
@@ -477,7 +526,9 @@ export default function SuperDashboard() {
                   setSelectedSemester(null);
                   setSubjects([]);
                 } else {
-                  setSelectedDept(null);
+                  const params = new URLSearchParams(window.location.search);
+                  params.delete("deptId");
+                  router.push(`/super/dashboard?${params.toString()}`);
                 }
               }}
               style={{ width: 36, height: 36, borderRadius: 10, background: "var(--bg-card-2)", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--text-secondary)", flexShrink: 0 }}
@@ -487,7 +538,11 @@ export default function SuperDashboard() {
             <div style={{ flex: 1, minWidth: 0 }}>
               {/* Breadcrumb */}
               <div style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 2, display: "flex", alignItems: "center", gap: 4 }}>
-                <span style={{ color: "var(--accent-2)", cursor: "pointer" }} onClick={() => { setSelectedDept(null); setSelectedSemester(null); }}>
+                <span style={{ color: "var(--accent-2)", cursor: "pointer" }} onClick={() => {
+                  const params = new URLSearchParams(window.location.search);
+                  params.delete("deptId");
+                  router.push(`/super/dashboard?${params.toString()}`);
+                }}>
                   {selectedOrg?.name}
                 </span>
                 <ChevronRight size={10} />
@@ -661,7 +716,12 @@ export default function SuperDashboard() {
           {/* Back + name + delete */}
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
             <button
-              onClick={() => setSelectedOrg(null)}
+              onClick={() => {
+                const params = new URLSearchParams(window.location.search);
+                params.delete("orgId");
+                params.delete("deptId");
+                router.push(`/super/dashboard?${params.toString()}`);
+              }}
               style={{ width: 36, height: 36, borderRadius: 10, background: "var(--bg-card-2)", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--text-secondary)", flexShrink: 0 }}
             >
               <ChevronLeft size={20} />
