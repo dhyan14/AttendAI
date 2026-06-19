@@ -507,45 +507,56 @@ async def take_attendance_ai(
             """
             Fully async: build HQ preview + run tiled face detection.
             Capped at 9 s via asyncio.wait_for.
-            Returns (preview_b64: str, face_boxes: list[dict])
+            Returns (preview_b64: str, face_boxes_scaled: list[dict], annotated_original_b64: str)
             """
             import io as _io
             from PIL import Image as PILImage
 
             preview_b64 = ""
+            annotated_original_b64 = ""
             scale_x = scale_y = 1.0
 
-            # ── Build HQ preview (BILINEAR — faster than LANCZOS) ────────
+            # ── Load original PIL image ──────────────────────────────────
             try:
-                img_pil = PILImage.open(_io.BytesIO(raw)).convert("RGB")
-                orig_w, orig_h = img_pil.width, img_pil.height
+                img_orig = PILImage.open(_io.BytesIO(raw)).convert("RGB")
+            except Exception as e:
+                print(f"[AI] Error loading original image: {e}")
+                return "", [], ""
+
+            # ── Build HQ preview for frontend (BILINEAR — faster) ────────
+            try:
+                orig_w, orig_h = img_orig.width, img_orig.height
                 max_w = 960
-                if img_pil.width > max_w:
-                    ratio = max_w / img_pil.width
-                    img_pil = img_pil.resize(
-                        (max_w, int(img_pil.height * ratio)),
+                if orig_w > max_w:
+                    ratio = max_w / orig_w
+                    img_preview = img_orig.resize(
+                        (max_w, int(orig_h * ratio)),
                         PILImage.BILINEAR
                     )
-                    scale_x = img_pil.width  / orig_w
-                    scale_y = img_pil.height / orig_h
+                    scale_x = img_preview.width  / orig_w
+                    scale_y = img_preview.height / orig_h
+                else:
+                    img_preview = img_orig.copy()
+                    
                 buf = _io.BytesIO()
-                img_pil.save(buf, format="JPEG", quality=82, optimize=False)
+                img_preview.save(buf, format="JPEG", quality=82, optimize=False)
                 preview_b64 = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
             except Exception as pe:
                 print(f"[AI] Preview error: {pe}")
 
             # ── Face detection — hard 9-second cap ───────────────────────
-            face_boxes: list[dict] = []
+            face_boxes_scaled: list[dict] = []
+            face_boxes_orig: list[dict] = []
             try:
                 probe_raw = await asyncio.wait_for(
                     face_service.get_embeddings_async(raw),
                     timeout=9.0
                 )
                 for (bbox_orig, probe_emb) in probe_raw:
-                    x1, y1, x2, y2 = bbox_orig
+                    ox1, oy1, ox2, oy2 = bbox_orig
                     scaled_bbox = [
-                        round(x1 * scale_x, 1), round(y1 * scale_y, 1),
-                        round(x2 * scale_x, 1), round(y2 * scale_y, 1),
+                        round(ox1 * scale_x, 1), round(oy1 * scale_y, 1),
+                        round(ox2 * scale_x, 1), round(oy2 * scale_y, 1),
                     ]
                     probe_vec = np.array(probe_emb, dtype=np.float32)
                     probe_vec /= (np.linalg.norm(probe_vec) + 1e-8)
@@ -559,57 +570,63 @@ async def take_attendance_ai(
                             (r for r in rec_rows if str(r.AttendanceRecord.student_id) == sid),
                             None
                         )
-                        face_boxes.append({
-                            "bbox": scaled_bbox,
-                            "matched": True,
-                            "student_id": sid,
-                            "student_name": matched_row.student_name if matched_row else "Unknown",
-                            "roll_no": matched_row.roll_no if matched_row else "",
-                            "confidence": round(best_sim, 3),
-                        })
+                        student_name = matched_row.student_name if matched_row else "Unknown"
+                        roll_no = matched_row.roll_no if matched_row else ""
+                        matched = True
                     else:
-                        face_boxes.append({
-                            "bbox": scaled_bbox,
-                            "matched": False,
-                            "student_id": None,
-                            "student_name": None,
-                            "roll_no": None,
-                            "confidence": round(best_sim, 3),
-                        })
+                        sid = None
+                        student_name = None
+                        roll_no = None
+                        matched = False
+
+                    face_boxes_scaled.append({
+                        "bbox": scaled_bbox,
+                        "matched": matched,
+                        "student_id": sid,
+                        "student_name": student_name,
+                        "roll_no": roll_no,
+                        "confidence": round(best_sim, 3),
+                    })
+
+                    face_boxes_orig.append({
+                        "bbox": [ox1, oy1, ox2, oy2],
+                        "matched": matched,
+                        "student_id": sid,
+                        "student_name": student_name,
+                        "roll_no": roll_no,
+                        "confidence": round(best_sim, 3),
+                    })
             except asyncio.TimeoutError:
                 print("[AI] Detection timed out (9s) — returning partial results for this image")
             except Exception as e:
                 print(f"[AI] Recognition error: {e}")
 
-            return preview_b64, face_boxes
+            # ── Annotate the ORIGINAL quality image ───────────────────────
+            try:
+                img_annotated = draw_annotations_on_image(img_orig, face_boxes_orig)
+                buf_orig = _io.BytesIO()
+                img_annotated.save(buf_orig, format="JPEG", quality=95)
+                annotated_original_b64 = "data:image/jpeg;base64," + base64.b64encode(buf_orig.getvalue()).decode()
+            except Exception as ae:
+                print(f"[AI] Original annotation error: {ae}")
+                # fallback to raw original base64
+                annotated_original_b64 = "data:image/jpeg;base64," + base64.b64encode(raw).decode()
+
+            return preview_b64, face_boxes_scaled, annotated_original_b64
 
         # ── Process ALL images IN PARALLEL ────────────────────────────────
-        # Total latency ≈ single slowest image, not sum of all images
         results = await asyncio.gather(*[_process_one(raw) for raw in raw_images])
 
         annotated_previews = []
-        for preview_b64, face_boxes in results:
+        for preview_b64, face_boxes_scaled, annotated_original_b64 in results:
             if preview_b64:
                 image_previews.append(preview_b64)
-                # Create server-side annotated preview to store in database
-                try:
-                    import io as _io
-                    from PIL import Image as PILImage
-                    # strip data:image/jpeg;base64,
-                    header, encoded = preview_b64.split(",", 1)
-                    img_data = base64.b64decode(encoded)
-                    img_pil = PILImage.open(_io.BytesIO(img_data)).convert("RGB")
-                    annotated_pil = draw_annotations_on_image(img_pil, face_boxes)
-                    buf = _io.BytesIO()
-                    annotated_pil.save(buf, format="JPEG", quality=82)
-                    annotated_b64 = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
-                    annotated_previews.append(annotated_b64)
-                except Exception as de:
-                    print(f"[AI] Error drawing server-side annotations: {de}")
-                    annotated_previews.append(preview_b64)
-            image_annotations.append(face_boxes)
+            image_annotations.append(face_boxes_scaled)
+            if annotated_original_b64:
+                annotated_previews.append(annotated_original_b64)
+            
             # Accumulate — keep highest confidence per student across all images
-            for fb in face_boxes:
+            for fb in face_boxes_scaled:
                 if fb["matched"] and fb["student_id"]:
                     sid = fb["student_id"]
                     conf = fb["confidence"]
@@ -620,9 +637,15 @@ async def take_attendance_ai(
     else:
         # Mock fallback — previews only, no AI
         total_size = 0
+        annotated_previews = []
         for raw in raw_images:
             total_size += len(raw)
             try:
+                # Save original unannotated image base64 directly to database
+                b64_orig = "data:image/jpeg;base64," + base64.b64encode(raw).decode()
+                annotated_previews.append(b64_orig)
+
+                # Resized preview for frontend
                 import io as _io
                 from PIL import Image as PILImage
                 img_pil = PILImage.open(_io.BytesIO(raw)).convert("RGB")
