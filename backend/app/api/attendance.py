@@ -365,7 +365,7 @@ async def take_attendance_ai(
     lec_res = await db.execute(select(Lecture).where(Lecture.id == lec_uuid))
     lecture = lec_res.scalar_one_or_none()
     if not lecture:
-        raise HTTPException(status_code=404, detail="Lecture not found")
+        raise HTTPException(status_code=404, detail=f"Lecture not found (id={lecture_id})")
 
     if not files:
         raise HTTPException(status_code=400, detail="No images provided")
@@ -379,8 +379,22 @@ async def take_attendance_ai(
         .order_by(Student.roll_no)
     )
     rec_rows = rec_res.all()
+    # Soft-fail: if no records, return a warning but don't crash
+    # (happens when division filter matched 0 students at lecture creation)
     if not rec_rows:
-        raise HTTPException(status_code=404, detail="No students enrolled for this lecture")
+        print(f"[take-ai] WARNING: Lecture {lecture_id} has 0 attendance records — no students were enrolled")
+        return {
+            "ai_used": False,
+            "mode": "no_students",
+            "warning": "⚠ No students found for this lecture. This usually means the selected Division does not match any student records. Try selecting a specific division (A, B, C…) instead of 'All', or ask admin to verify student division assignments.",
+            "images_processed": 0,
+            "image_previews": [],
+            "image_annotations": [],
+            "detected_faces": 0,
+            "matched_faces": 0,
+            "total_students": 0,
+            "detection_results": [],
+        }
 
     student_ids = [str(r.AttendanceRecord.student_id) for r in rec_rows]
 

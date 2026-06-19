@@ -524,6 +524,14 @@ export default function TakeAttendancePage() {
       }
 
       const result: AIResult = await r2.json();
+
+      // If backend signals no students were enrolled, show clear warning and go back
+      if ((result as any).mode === "no_students") {
+        showToast("✗ No students found for this division. Check division assignment.");
+        setStep(1);
+        return;
+      }
+
       setAiResult(result);
       const init: Record<string, boolean> = {};
       result.detection_results.forEach(d => { init[d.student_id] = d.status === "present"; });
