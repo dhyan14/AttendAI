@@ -56,7 +56,7 @@ export default function AdminStudentsPage() {
   useEffect(() => {
     async function loadDepts() {
       try {
-        const res = await apiFetch("/departments");
+        const res = await apiFetch("/departments/");
         if (res.ok) {
           const data = await res.json();
           setDepartments(data);

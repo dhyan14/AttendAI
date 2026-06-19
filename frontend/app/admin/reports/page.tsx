@@ -67,7 +67,7 @@ export default function AdminReportsPage() {
     async function loadInitialData() {
       try {
         const [deptRes, summaryRes] = await Promise.all([
-          apiFetch("/departments"),
+          apiFetch("/departments/"),
           apiFetch("/reports/summary"),
         ]);
         if (deptRes.ok) {

@@ -47,7 +47,7 @@ export default function StudentProfilePage() {
           setProfile(studentData);
 
           // Fetch dept name
-          const deptsRes = await apiFetch("/departments");
+          const deptsRes = await apiFetch("/departments/");
           if (deptsRes.ok) {
             const depts = await deptsRes.json();
             const dept = depts.find((d: any) => d.id === studentData.dept_id);
