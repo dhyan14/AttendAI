@@ -310,7 +310,8 @@ export default function AdminDepartmentsPage() {
   }
 
   return (
-    <div className="page-content fade-up" style={{ paddingBottom: 100 }}>
+    <>
+      <div className="page-content fade-up" style={{ paddingBottom: 100 }}>
       <TopBar title="Departments" showBack={true} />
 
       {/* Header Stats */}
@@ -398,6 +399,7 @@ export default function AdminDepartmentsPage() {
           })}
         </div>
       )}
+      </div>
 
       {/* Add Department Modal */}
       {showAddModal && (
@@ -441,7 +443,7 @@ export default function AdminDepartmentsPage() {
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes slideDown { from { opacity:0; transform:translateX(-50%) translateY(-8px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
       `}</style>
-    </div>
+    </>
   );
 }
 

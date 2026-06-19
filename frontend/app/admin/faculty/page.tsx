@@ -123,7 +123,8 @@ export default function AdminFacultyPage() {
   }
 
   return (
-    <div className="page-content fade-up" style={{ paddingBottom: 100 }}>
+    <>
+      <div className="page-content fade-up" style={{ paddingBottom: 100 }}>
       <TopBar title="Faculty" showBack={true} />
 
       {/* Main Controls Card */}
@@ -215,6 +216,7 @@ export default function AdminFacultyPage() {
           ))}
         </div>
       )}
+      </div>
 
       {/* Add Faculty Modal */}
       {showAddModal && (
@@ -317,6 +319,6 @@ export default function AdminFacultyPage() {
       )}
 
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-    </div>
+    </>
   );
 }

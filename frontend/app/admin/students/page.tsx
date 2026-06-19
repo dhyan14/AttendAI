@@ -188,7 +188,8 @@ export default function AdminStudentsPage() {
   }
 
   return (
-    <div className="page-content fade-up" style={{ paddingBottom: 100 }}>
+    <>
+      <div className="page-content fade-up" style={{ paddingBottom: 100 }}>
       <TopBar title="Students" showBack={true} />
 
       {/* Main Controls Card */}
@@ -318,6 +319,7 @@ export default function AdminStudentsPage() {
           ))}
         </div>
       )}
+      </div>
 
       {/* CSV Import Modal */}
       {showImportModal && (
@@ -496,6 +498,6 @@ export default function AdminStudentsPage() {
       )}
 
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-    </div>
+    </>
   );
 }
