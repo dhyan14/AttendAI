@@ -3,14 +3,15 @@ AttendAI Face Recognition Service
 ===================================
 Optimized for CLASSROOM PHOTOS — students at 2–15 metres from camera.
 
-Key fixes for far-away face detection:
-  1. det_size=(640,640) — higher internal resolution catches small faces
-  2. Image upscaling — 2× upscale before detection for far faces
-  3. Tiled detection — image split into overlapping tiles, each tile run
-     through detector independently (standard technique for crowd detection)
-  4. NMS — duplicates from tile overlaps removed via IoU suppression
-  5. Lowered det_score threshold to 0.35 (was implicitly 0.5) for small faces
-  6. Multi-angle enrollment — front + left + right embeddings averaged per student
+Speed-first tuning (target: ≤10 s for up to 3 photos on CPU):
+  1. det_size=(480,480)  — 44% fewer pixels vs 640×640, ~2× faster per inference pass
+  2. UPSCALE_FACTOR=1.5  — reduced upscale lowers memory pressure and resize time
+  3. 1×2 tile grid        — 3 total passes (1 full + 2 tiles) vs old 7 passes (1+6)
+     Trade-off: slightly less coverage for extreme-corner far faces, but 2.5× faster
+  4. Parallel image processing via ThreadPoolExecutor — all uploaded photos run concurrently
+  5. NMS — duplicates from tile overlaps removed via IoU suppression
+  6. Lowered det_score threshold to 0.35 for small faces
+  7. Multi-angle enrollment — front + left + right embeddings averaged per student
 """
 
 from __future__ import annotations
@@ -20,20 +21,19 @@ import concurrent.futures
 from typing import Optional
 
 # ─── Module-level constants (importable by other modules) ─────────────────────
-MATCH_THRESHOLD = 0.40          # cosine similarity threshold for recognition match
-DET_SIZE = (640, 640)           # SCRFD detector input resolution
-DET_SCORE_THRESH = 0.35         # minimum detection confidence (lower = catch more small faces)
-UPSCALE_FACTOR = 2.0            # upscale before tiled detection
-MAX_DET_WIDTH = 2560
-TILE_ROWS, TILE_COLS = 2, 3
-TILE_OVERLAP = 0.20
-
+MATCH_THRESHOLD   = 0.40          # cosine similarity threshold for recognition match
+DET_SIZE          = (480, 480)    # SCRFD detector input resolution — faster than 640×640
+DET_SCORE_THRESH  = 0.35          # minimum detection confidence
+UPSCALE_FACTOR    = 1.5           # reduced from 2.0 — less memory, faster resize
+MAX_DET_WIDTH     = 1920          # cap upscaled width
+TILE_ROWS, TILE_COLS = 1, 2       # 1×2 grid → 3 total passes (1 full + 2 tiles)
+TILE_OVERLAP      = 0.20
 
 
 class FaceService:
     """
-    InsightFace ArcFace wrapper with tiled multi-scale detection.
-    Optimized for classroom-distance face recognition.
+    InsightFace ArcFace wrapper with speed-optimized tiled detection.
+    Target: ≤ 10 seconds for 3 classroom photos on a CPU server.
     """
 
     def __init__(self):
@@ -41,7 +41,8 @@ class FaceService:
         self.initialized = False
         self.load_error: Optional[str] = None
         self._loading    = False
-        self._executor   = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        # Use more workers to process photos in parallel
+        self._executor   = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
     # ── Model Loading ─────────────────────────────────────────────────────────
 
@@ -66,11 +67,8 @@ class FaceService:
             providers=["CPUExecutionProvider"],
             root=MODEL_ROOT,
         )
-        # KEY FIX: 640×640 instead of 320×320
-        # Higher resolution → smaller minimum detectable face size
-        # 320×320: min face ~32px (close-up only)
-        # 640×640: min face ~16px (medium distance)
-        # After 2× upscale: effectively min face ~8px (far distance)
+        # 480×480 is the sweet spot — catches faces at medium-far distance,
+        # but is ~2× faster per inference pass than 640×640
         model.prepare(ctx_id=-1, det_size=DET_SIZE, det_thresh=DET_SCORE_THRESH)
         print(f"[FaceService] Model ready: det_size={DET_SIZE}, det_thresh={DET_SCORE_THRESH}")
         return model
@@ -81,11 +79,11 @@ class FaceService:
         self._loading = True
         try:
             loop = asyncio.get_running_loop()
-            print("[FaceService] Loading InsightFace buffalo_s (640×640 tiled mode)...")
+            print("[FaceService] Loading InsightFace buffalo_s (480×480 speed mode)...")
             self.model = await loop.run_in_executor(self._executor, self._load_model)
             self.initialized = True
             self.load_error  = None
-            print("✅ InsightFace buffalo_s ready — classroom-distance optimized")
+            print("✅ InsightFace buffalo_s ready — speed-optimized (1×2 tiles, 480px)")
         except Exception as e:
             import traceback
             self.load_error  = f"{type(e).__name__}: {e}"
@@ -112,7 +110,8 @@ class FaceService:
         new_h = int(h * (new_w / w))
         if new_w == w:
             return img, 1.0
-        resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
+        # Use INTER_LINEAR (bilinear) instead of LANCZOS4 — significantly faster
+        resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
         actual_scale = new_w / w
         return resized, actual_scale
 
@@ -164,79 +163,90 @@ class FaceService:
 
     def _tiled_detect(self, img) -> list:
         """
-        Multi-scale tiled detection pipeline for classroom photos.
+        Speed-optimized tiled detection pipeline for classroom photos.
 
-        Steps:
-        1. Upscale image 2× (catches faces that were too small at original res)
-        2. Detect on full upscaled image
-        3. Split into 2×3 overlapping tiles, detect on each tile independently
-        4. Merge all detections back to original coordinate space
-        5. Deduplicate with NMS
+        Total inference passes = 3 (1 full-image + 1×2 tiles):
+          - Pass 1: Full image at 1.5× upscale  → catches medium-distance faces
+          - Pass 2: Left half of upscaled image  → catches left-side far faces
+          - Pass 3: Right half of upscaled image → catches right-side far faces
+          - NMS to deduplicate overlapping detections
 
-        This is the standard approach used in surveillance/crowd analysis.
+        Previous config: 7 passes (1 full + 2×3 tiles) at 640px → ~3× slower
+        Current config:  3 passes (1 full + 1×2 tiles) at 480px → fast enough for ≤10s
         """
         h_orig, w_orig = img.shape[:2]
-
         all_detections: list = []
 
-        # ── Pass 1: Full image at 2× upscale ──────────────────────────────
+        # ── Pass 1: Full image at 1.5× upscale ───────────────────────────
         img_up, scale = self._upscale(img, UPSCALE_FACTOR)
         h_up, w_up = img_up.shape[:2]
 
         dets_full = self._detect_on_img(img_up)
         for det in dets_full:
             b = det["bbox"]
-            # Map bboxes back to original resolution
             det["bbox"] = [b[0]/scale, b[1]/scale, b[2]/scale, b[3]/scale]
         all_detections.extend(dets_full)
 
-        # ── Pass 2: Tiled detection (with overlap) on upscaled image ──────
-        # Split upscaled image into TILE_ROWS × TILE_COLS overlapping tiles
-        tile_h = int(h_up / (TILE_ROWS - TILE_OVERLAP * (TILE_ROWS - 1)))
+        # ── Pass 2 & 3: 1×2 horizontal tile grid (left + right) ──────────
+        # Tiles split the upscaled image into left and right halves with 20% overlap
         tile_w = int(w_up / (TILE_COLS - TILE_OVERLAP * (TILE_COLS - 1)))
-        step_h = int(tile_h * (1 - TILE_OVERLAP))
         step_w = int(tile_w * (1 - TILE_OVERLAP))
 
-        for row in range(TILE_ROWS):
-            for col in range(TILE_COLS):
-                y1 = min(row * step_h, h_up - tile_h)
-                x1 = min(col * step_w, w_up - tile_w)
-                y2 = min(y1 + tile_h, h_up)
-                x2 = min(x1 + tile_w, w_up)
+        for col in range(TILE_COLS):
+            x1 = min(col * step_w, w_up - tile_w)
+            x2 = min(x1 + tile_w, w_up)
+            tile = img_up[0:h_up, x1:x2]   # full height, partial width
+            if tile.size == 0:
+                continue
 
-                tile = img_up[y1:y2, x1:x2]
-                if tile.size == 0:
-                    continue
-
-                tile_dets = self._detect_on_img(tile)
-                for det in tile_dets:
-                    b = det["bbox"]
-                    # Translate tile-local bbox → upscaled-image coords → original coords
-                    ox1 = (b[0] + x1) / scale
-                    oy1 = (b[1] + y1) / scale
-                    ox2 = (b[2] + x1) / scale
-                    oy2 = (b[3] + y1) / scale
-                    det["bbox"] = [ox1, oy1, ox2, oy2]
-                all_detections.extend(tile_dets)
+            tile_dets = self._detect_on_img(tile)
+            for det in tile_dets:
+                b = det["bbox"]
+                ox1 = (b[0] + x1) / scale
+                oy1 = (b[1]      ) / scale
+                ox2 = (b[2] + x1) / scale
+                oy2 = (b[3]      ) / scale
+                det["bbox"] = [ox1, oy1, ox2, oy2]
+            all_detections.extend(tile_dets)
 
         # ── Deduplicate with NMS ───────────────────────────────────────────
         unique = self._nms(all_detections, iou_thresh=0.40)
         print(f"[FaceService] Tiled detection: {len(all_detections)} raw → {len(unique)} unique faces")
         return unique
 
+    def _process_single_image(self, image_bytes: bytes) -> list:
+        """
+        Synchronous: decode + tiled-detect one image.
+        Called via run_in_executor so it doesn't block the event loop.
+        Returns list of (bbox, embedding) tuples.
+        """
+        img = self._decode_image(image_bytes)
+        faces = self._tiled_detect(img)
+        return [(f["bbox"], f["embedding"]) for f in faces]
+
     # ── Public API ────────────────────────────────────────────────────────────
 
     def get_embeddings(self, image_bytes: bytes) -> list:
         """
         Classroom photo → all face (bbox, embedding) pairs.
-        Uses tiled multi-scale detection for far-away faces.
+        Synchronous wrapper — use get_embeddings_async for async callers.
         Returns list of (bbox, embedding_list) tuples.
         """
         if not self.initialized:
             raise RuntimeError("Face service not initialized")
-        img = self._decode_image(image_bytes)
-        faces = self._tiled_detect(img)
-        return [(f["bbox"], f["embedding"]) for f in faces]
+        return self._process_single_image(image_bytes)
+
+    async def get_embeddings_async(self, image_bytes: bytes) -> list:
+        """
+        Async version: runs detection in the thread pool so the event loop stays free.
+        Use this from async FastAPI endpoints for best throughput.
+        """
+        if not self.initialized:
+            raise RuntimeError("Face service not initialized")
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor, self._process_single_image, image_bytes
+        )
 
     def get_embedding_single(self, image_bytes: bytes) -> Optional[list]:
         """
@@ -277,7 +287,6 @@ class FaceService:
         stored_vecs = np.array([s["embedding"] for s in stored_embeddings], dtype=np.float32)
 
         # Both ArcFace outputs are L2-normalized → cosine = dot product
-        # But re-normalize to be safe (stored embeddings might have been read from DB)
         probe_norm  = probe_arr  / (np.linalg.norm(probe_arr,  axis=1, keepdims=True) + 1e-8)
         stored_norm = stored_vecs / (np.linalg.norm(stored_vecs, axis=1, keepdims=True) + 1e-8)
 

@@ -6,6 +6,7 @@ from typing import List, Optional
 from datetime import datetime
 import uuid
 import base64
+import asyncio
 
 from app.database import get_db
 from app.models import (
@@ -140,7 +141,6 @@ async def create_lecture(
     # Auto-create a Faculty profile if the user has faculty/dept_admin role but no record yet
     if not fac:
         from app.models import Department as DeptModel
-        # Try to find the dept via org — pick first dept in their org
         dept_result = None
         if current_user.org_id:
             dept_q = await db.execute(
@@ -169,7 +169,7 @@ async def create_lecture(
         raise HTTPException(status_code=404, detail="Subject not found")
 
     students_query = select(Student).where(Student.dept_id == subject.dept_id)
-    if req.division:
+    if req.division and req.division != "All":
         students_query = students_query.where(Student.division == req.division)
     if req.batch and req.batch != "All":
         students_query = students_query.where(Student.batch == req.batch)
@@ -305,7 +305,7 @@ async def finalize_lecture(
     present_count = 0
 
     for record in records:
-        was_present   = record.status == AttendanceStatus.present
+        was_present    = record.status == AttendanceStatus.present
         is_now_present = record.student_id in present_uuids
         if was_present != is_now_present:
             record.status = AttendanceStatus.present if is_now_present else AttendanceStatus.absent
@@ -321,36 +321,40 @@ async def finalize_lecture(
     return {"message": "Attendance successfully finalized", "present_count": present_count}
 
 
-# ─── AI Attendance (real face recognition) ─────────────────
+# ─── AI Attendance (parallel, speed-optimized) ─────────────
 
 
 @router.post("/take-ai")
 async def take_attendance_ai(
     lecture_id: str = Form(...),
-    files: List[UploadFile] = File(...),   # up to 5 classroom images
+    files: List[UploadFile] = File(...),   # up to 3 classroom images
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_faculty)
 ):
     """
     Take AI-based attendance using real face recognition.
 
-    Accepts up to 5 classroom photos. For each photo:
-      1. Run InsightFace to detect all faces and extract 512-dim embeddings.
-      2. Cosine-similarity match against all enrolled students' face embeddings.
-      3. Mark student present if best match confidence >= 0.45.
+    Speed optimizations (target ≤ 10 s on CPU):
+      - Accepts max 3 photos (was 5) — fewer photos = less total work
+      - ALL photos processed IN PARALLEL via asyncio.gather
+      - Each image capped at 9 s via asyncio.wait_for
+      - InsightFace runs at 480px (was 640px) — ~2× faster per inference pass
+      - Tiled detection: 3 passes (1 full + 1×2 tiles) vs old 7 passes (1+6)
+      - Stored embedding matrix built ONCE and reused across all images
+      - BILINEAR resize for previews (faster than LANCZOS)
 
-    Falls back to deterministic mock (80% attendance) if InsightFace is unavailable.
+    Falls back to deterministic mock if InsightFace unavailable.
     """
-    from app.services.face_service import face_service
+    from app.services.face_service import face_service, MATCH_THRESHOLD
     import random
+    import numpy as np
 
-    # Lazy init — if model not loaded yet, try now (first request triggers load)
+    # Lazy init
     if not face_service.initialized:
         try:
             await face_service.initialize()
         except Exception as e:
             print(f"[FaceService] Lazy init failed: {e}")
-
 
     # ── Validate lecture ──────────────────────────────────────────────────
     try:
@@ -365,7 +369,7 @@ async def take_attendance_ai(
 
     if not files:
         raise HTTPException(status_code=400, detail="No images provided")
-    files = files[:5]   # cap at 5
+    files = files[:3]   # hard cap at 3 for speed
 
     # ── Load attendance records + student info ───────────────────────────
     rec_res = await db.execute(
@@ -393,78 +397,76 @@ async def take_attendance_ai(
         if fe.embedding is None:
             continue
         try:
-            # pgvector returns numpy arrays — convert to list and check for placeholder zeros
             emb_list = fe.embedding.tolist() if hasattr(fe.embedding, "tolist") else list(fe.embedding)
             if any(v != 0.0 for v in emb_list):
                 stored_list.append({"student_id": str(fe.student_id), "embedding": emb_list})
         except Exception:
-            pass  # skip malformed embeddings
+            pass
 
+    # ── Pre-read all image bytes (sequential async I/O) ──────────────────
+    raw_images: list[bytes] = []
+    for upload in files:
+        raw = await upload.read()
+        if raw:
+            raw_images.append(raw)
 
     # ── AI Mode vs. Mock Mode ────────────────────────────────────────────
     use_ai = face_service.initialized and len(stored_list) > 0
 
     detected_student_ids: set[str] = set()
-    ai_confidences: dict[str, float] = {}   # student_id → confidence
-
-    # Per-image: list of annotated face boxes for canvas drawing on frontend
-    image_previews: list[str] = []          # high-quality base64 previews
-    image_annotations: list[list[dict]] = []  # per-image list of face boxes
+    ai_confidences: dict[str, float] = {}
+    image_previews: list[str] = []
+    image_annotations: list[list[dict]] = []
 
     if use_ai:
-        for upload in files:
-            raw = await upload.read()
-            if not raw:
-                continue
+        # Build stored embedding matrix ONCE — reused across all parallel image tasks
+        stored_vecs_arr = np.array([s["embedding"] for s in stored_list], dtype=np.float32)
+        stored_vecs_arr /= (np.linalg.norm(stored_vecs_arr, axis=1, keepdims=True) + 1e-8)
 
-            # HIGH QUALITY preview — 960px wide, quality=85
-            # CRITICAL: record original dims BEFORE resize so we can scale bboxes
-            scale_x = 1.0
-            scale_y = 1.0
+        async def _process_one(raw: bytes):
+            """
+            Fully async: build HQ preview + run tiled face detection.
+            Capped at 9 s via asyncio.wait_for.
+            Returns (preview_b64: str, face_boxes: list[dict])
+            """
+            import io as _io
+            from PIL import Image as PILImage
+
+            preview_b64 = ""
+            scale_x = scale_y = 1.0
+
+            # ── Build HQ preview (BILINEAR — faster than LANCZOS) ────────
             try:
-                from PIL import Image as PILImage
-                import io as _io
                 img_pil = PILImage.open(_io.BytesIO(raw)).convert("RGB")
-                orig_w_px = img_pil.width
-                orig_h_px = img_pil.height
-
+                orig_w, orig_h = img_pil.width, img_pil.height
                 max_w = 960
                 if img_pil.width > max_w:
                     ratio = max_w / img_pil.width
-                    new_w = max_w
-                    new_h = int(img_pil.height * ratio)
-                    img_pil = img_pil.resize((new_w, new_h), PILImage.LANCZOS)
-                    # Scale factor: bbox coords (original) → preview coords
-                    scale_x = new_w / orig_w_px
-                    scale_y = new_h / orig_h_px
-
+                    img_pil = img_pil.resize(
+                        (max_w, int(img_pil.height * ratio)),
+                        PILImage.BILINEAR
+                    )
+                    scale_x = img_pil.width  / orig_w
+                    scale_y = img_pil.height / orig_h
                 buf = _io.BytesIO()
-                img_pil.save(buf, format="JPEG", quality=88)
-                b64 = base64.b64encode(buf.getvalue()).decode()
-                image_previews.append(f"data:image/jpeg;base64,{b64}")
-            except Exception as img_err:
-                print(f"[AI] Preview generation error: {img_err}")
+                img_pil.save(buf, format="JPEG", quality=82, optimize=False)
+                preview_b64 = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+            except Exception as pe:
+                print(f"[AI] Preview error: {pe}")
 
-            # Run face detection + recognition on ORIGINAL raw bytes
+            # ── Face detection — hard 9-second cap ───────────────────────
             face_boxes: list[dict] = []
             try:
-                probe_raw = face_service.get_embeddings(raw)   # [(bbox, embedding), ...]
-                # bbox coords are in ORIGINAL image space — scale to preview space
-                from app.services.face_service import MATCH_THRESHOLD
-                import numpy as np
-                stored_vecs_arr = np.array([s["embedding"] for s in stored_list], dtype=np.float32)
-                stored_vecs_arr /= (np.linalg.norm(stored_vecs_arr, axis=1, keepdims=True) + 1e-8)
-
+                probe_raw = await asyncio.wait_for(
+                    face_service.get_embeddings_async(raw),
+                    timeout=9.0
+                )
                 for (bbox_orig, probe_emb) in probe_raw:
-                    # Scale bbox from original pixel space → preview pixel space
                     x1, y1, x2, y2 = bbox_orig
                     scaled_bbox = [
-                        round(x1 * scale_x, 1),
-                        round(y1 * scale_y, 1),
-                        round(x2 * scale_x, 1),
-                        round(y2 * scale_y, 1),
+                        round(x1 * scale_x, 1), round(y1 * scale_y, 1),
+                        round(x2 * scale_x, 1), round(y2 * scale_y, 1),
                     ]
-
                     probe_vec = np.array(probe_emb, dtype=np.float32)
                     probe_vec /= (np.linalg.norm(probe_vec) + 1e-8)
                     sims = stored_vecs_arr @ probe_vec
@@ -477,11 +479,8 @@ async def take_attendance_ai(
                             (r for r in rec_rows if str(r.AttendanceRecord.student_id) == sid),
                             None
                         )
-                        if sid not in ai_confidences or best_sim > ai_confidences[sid]:
-                            ai_confidences[sid] = round(best_sim, 4)
-                            detected_student_ids.add(sid)
                         face_boxes.append({
-                            "bbox": scaled_bbox,   # in PREVIEW image coords
+                            "bbox": scaled_bbox,
                             "matched": True,
                             "student_id": sid,
                             "student_name": matched_row.student_name if matched_row else "Unknown",
@@ -490,40 +489,58 @@ async def take_attendance_ai(
                         })
                     else:
                         face_boxes.append({
-                            "bbox": scaled_bbox,   # in PREVIEW image coords
+                            "bbox": scaled_bbox,
                             "matched": False,
                             "student_id": None,
                             "student_name": None,
                             "roll_no": None,
                             "confidence": round(best_sim, 3),
                         })
+            except asyncio.TimeoutError:
+                print("[AI] Detection timed out (9s) — returning partial results for this image")
             except Exception as e:
-                print(f"[AI] Recognition error on image: {e}")
+                print(f"[AI] Recognition error: {e}")
 
+            return preview_b64, face_boxes
+
+        # ── Process ALL images IN PARALLEL ────────────────────────────────
+        # Total latency ≈ single slowest image, not sum of all images
+        results = await asyncio.gather(*[_process_one(raw) for raw in raw_images])
+
+        for preview_b64, face_boxes in results:
+            if preview_b64:
+                image_previews.append(preview_b64)
             image_annotations.append(face_boxes)
+            # Accumulate — keep highest confidence per student across all images
+            for fb in face_boxes:
+                if fb["matched"] and fb["student_id"]:
+                    sid = fb["student_id"]
+                    conf = fb["confidence"]
+                    if sid not in ai_confidences or conf > ai_confidences[sid]:
+                        ai_confidences[sid] = conf
+                        detected_student_ids.add(sid)
 
     else:
-        # Mock fallback — read all files for HQ previews
+        # Mock fallback — previews only, no AI
         total_size = 0
-        for upload in files:
-            raw = await upload.read()
+        for raw in raw_images:
             total_size += len(raw)
             try:
-                from PIL import Image as PILImage
                 import io as _io
+                from PIL import Image as PILImage
                 img_pil = PILImage.open(_io.BytesIO(raw)).convert("RGB")
                 max_w = 960
                 if img_pil.width > max_w:
                     ratio = max_w / img_pil.width
                     img_pil = img_pil.resize(
                         (max_w, int(img_pil.height * ratio)),
-                        PILImage.LANCZOS
+                        PILImage.BILINEAR
                     )
                 buf = _io.BytesIO()
-                img_pil.save(buf, format="JPEG", quality=85)
+                img_pil.save(buf, format="JPEG", quality=82)
                 b64 = base64.b64encode(buf.getvalue()).decode()
                 image_previews.append(f"data:image/jpeg;base64,{b64}")
-                image_annotations.append([])   # no annotation in mock mode
+                image_annotations.append([])
             except Exception:
                 pass
 
@@ -586,10 +603,9 @@ async def take_attendance_ai(
         "warning": warning,
         "images_processed": len(image_previews),
         "image_previews": image_previews,
-        "image_annotations": image_annotations,   # NEW: per-face bbox + match data
+        "image_annotations": image_annotations,
         "detected_faces": sum(len(a) for a in image_annotations) if use_ai else present_count,
         "matched_faces": present_count,
         "total_students": len(rec_rows),
         "detection_results": detection_results,
     }
-

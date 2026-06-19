@@ -434,7 +434,7 @@ export default function TakeAttendancePage() {
   // ── Photo helpers ─────────────────────────────────────────
   const addPhotos = (files: FileList | null) => {
     if (!files) return;
-    const toAdd = Array.from(files).slice(0, 5 - photos.length);
+    const toAdd = Array.from(files).slice(0, 3 - photos.length);
     setPhotos(p => [...p, ...toAdd]);
     Promise.all(toAdd.map(f => new Promise<string>(res => {
       const r = new FileReader(); r.onload = e => res(e.target?.result as string); r.readAsDataURL(f);
@@ -756,7 +756,7 @@ export default function TakeAttendancePage() {
             {/* Photos */}
             <div className="card" style={{ margin: 0 }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.8 }}>
-                Classroom Photos ({photos.length}/5)
+                Classroom Photos ({photos.length}/3)
               </div>
               {photoPreviews.length > 0 && (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 10 }}>
@@ -774,7 +774,7 @@ export default function TakeAttendancePage() {
                   ))}
                 </div>
               )}
-              {photos.length < 5 && (
+              {photos.length < 3 && (
                 <div style={{ display: "flex", gap: 8 }}>
                   <label style={{ flex: 1, cursor: "pointer" }}>
                     <input type="file" accept="image/*" multiple style={{ display: "none" }} onChange={e => addPhotos(e.target.files)} />
@@ -791,7 +791,7 @@ export default function TakeAttendancePage() {
                 </div>
               )}
               <div style={{ fontSize: 11, color: "var(--text-muted)", textAlign: "center", marginTop: 8 }}>
-                Upload up to 5 classroom photos — more angles = better accuracy
+                Upload up to 3 photos — processed in parallel for fast results ⚡
               </div>
             </div>
           </div>
