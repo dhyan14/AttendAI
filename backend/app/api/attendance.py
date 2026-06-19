@@ -169,10 +169,10 @@ async def create_lecture(
         raise HTTPException(status_code=404, detail="Subject not found")
 
     students_query = select(Student).where(Student.dept_id == subject.dept_id)
-    if req.division and req.division != "All":
-        students_query = students_query.where(Student.division == req.division)
-    if req.batch and req.batch != "All":
-        students_query = students_query.where(Student.batch == req.batch)
+    if req.division and req.division.strip().upper() not in ("ALL", ""):
+        students_query = students_query.where(Student.division == req.division.strip().upper())
+    if req.batch and req.batch.strip().upper() not in ("ALL", ""):
+        students_query = students_query.where(Student.batch == req.batch.strip().upper())
 
     students_res = await db.execute(students_query)
     students = students_res.scalars().all()
