@@ -728,8 +728,9 @@ async def take_attendance_ai(
         "warning": warning,
         "images_processed": len(image_previews),
         "image_previews": image_previews,
+        "annotated_image_urls": annotated_previews,  # full-quality annotated images
         "image_annotations": image_annotations,
-        "detected_faces": sum(len(a) for a in image_annotations) if use_ai else present_count,
+        "detected_faces": sum(len(a) for a in image_annotations) if use_ai else 0,
         "matched_faces": present_count,
         "total_students": len(rec_rows),
         "detection_results": detection_results,

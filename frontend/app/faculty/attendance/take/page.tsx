@@ -31,8 +31,9 @@ interface DetectionResult {
 interface AIResult {
   ai_used: boolean; mode: string; warning: string | null;
   images_processed: number;
-  image_previews: string[];
-  image_annotations: FaceBox[][];  // per-image face boxes
+  image_previews: string[];         // 960px fast preview for display
+  annotated_image_urls?: string[];  // full-quality baked annotations stored in DB
+  image_annotations: FaceBox[][];   // per-image face boxes (for canvas overlay)
   detected_faces: number;
   matched_faces: number;
   total_students: number;
@@ -362,6 +363,117 @@ function AnnotatedPhoto({
 }
 
 
+// ─── Fullscreen Image Viewer (no canvas — native pixel quality) ─────────────
+// Displays a pre-annotated image at native resolution with zoom/pan support
+function FullscreenImageViewer({ src, onClose }: { src: string; onClose: () => void }) {
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStart = useRef({ x: 0, y: 0 });
+  const panStart  = useRef({ x: 0, y: 0 });
+
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.15 : 0.85;
+    setZoom(prev => {
+      const z = Math.max(1, Math.min(prev * factor, 8));
+      if (z === 1) setPan({ x: 0, y: 0 });
+      return z;
+    });
+  };
+
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (zoom <= 1) return;
+    setIsDragging(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragStart.current = { x: e.clientX, y: e.clientY };
+    panStart.current  = { ...pan };
+  };
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (!isDragging) return;
+    setPan({ x: panStart.current.x + (e.clientX - dragStart.current.x) / zoom,
+             y: panStart.current.y + (e.clientY - dragStart.current.y) / zoom });
+  };
+  const handlePointerUp = (e: React.PointerEvent) => {
+    if (isDragging) { setIsDragging(false); e.currentTarget.releasePointerCapture(e.pointerId); }
+  };
+
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, zIndex: 1100, background: "#000",
+               display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}
+      onWheel={handleWheel}
+    >
+      {/* Zoom controls */}
+      <div style={{ position: "absolute", top: 16, left: 16, zIndex: 10, display: "flex", gap: 8 }}>
+        {[
+          { label: <ZoomOut size={16} />, fn: () => setZoom(p => { const z = Math.max(1, p - 0.5); if (z === 1) setPan({ x: 0, y: 0 }); return z; }), disabled: zoom <= 1 },
+          { label: `${Math.round(zoom * 100)}%`,  fn: undefined, disabled: false },
+          { label: <ZoomIn size={16} />,  fn: () => setZoom(p => Math.min(8, p + 0.5)), disabled: zoom >= 8 },
+        ].map((btn, i) => (
+          <button key={i} onClick={btn.fn ?? undefined} disabled={btn.disabled}
+            style={{ minWidth: 38, height: 38, borderRadius: 8, background: "rgba(255,255,255,0.15)",
+                     border: "1.5px solid rgba(255,255,255,0.3)", color: "#fff", cursor: btn.disabled ? "not-allowed" : "pointer",
+                     display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700,
+                     backdropFilter: "blur(8px)", opacity: btn.disabled ? 0.5 : 1, padding: "0 10px" }}>
+            {btn.label}
+          </button>
+        ))}
+        {zoom > 1 && (
+          <button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}
+            style={{ padding: "0 12px", height: 38, borderRadius: 8, background: "rgba(255,255,255,0.15)",
+                     border: "1.5px solid rgba(255,255,255,0.3)", color: "#fff", cursor: "pointer",
+                     fontSize: 11, fontWeight: 700, backdropFilter: "blur(8px)" }}>Reset</button>
+        )}
+      </div>
+
+      {/* Close */}
+      <button onClick={onClose}
+        style={{ position: "absolute", top: 16, right: 16, zIndex: 10, width: 44, height: 44, borderRadius: "50%",
+                 background: "rgba(255,255,255,0.15)", border: "1.5px solid rgba(255,255,255,0.3)",
+                 color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                 backdropFilter: "blur(8px)" }}>
+        <X size={22} />
+      </button>
+
+      {/* Image — native resolution, no canvas re-encode, no quality loss */}
+      <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center",
+                    justifyContent: "center", overflow: "hidden", touchAction: "none" }}>
+        <img
+          src={src}
+          alt="Annotated classroom photo"
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
+          style={{
+            maxWidth: "100vw", maxHeight: "100dvh", objectFit: "contain", display: "block",
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+            transformOrigin: "center center",
+            transition: isDragging ? "none" : "transform 0.15s ease-out",
+            cursor: zoom > 1 ? (isDragging ? "grabbing" : "grab") : "default",
+            imageRendering: "auto",  // let browser use high-quality bicubic interpolation
+          }}
+        />
+      </div>
+
+      {/* Legend */}
+      <div style={{ position: "absolute", bottom: 24, left: "50%", transform: "translateX(-50%)",
+                    display: "flex", gap: 20, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(12px)",
+                    padding: "10px 24px", borderRadius: 99, border: "1px solid rgba(255,255,255,0.15)",
+                    pointerEvents: "none" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: "#22d37a" }}>
+          <div style={{ width: 14, height: 14, border: "2.5px solid #22d37a", borderRadius: 2 }} /> Matched
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: "#ff453a" }}>
+          <div style={{ width: 14, height: 14, border: "2.5px solid #ff453a", borderRadius: 2 }} /> Unmatched
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 // ─── Main Page ───────────────────────────────────────────────
 export default function TakeAttendancePage() {
   const router = useRouter();
@@ -437,16 +549,18 @@ export default function TakeAttendancePage() {
       setOverrides(init);
 
       const hasImages = data.classroom_image_urls && data.classroom_image_urls.length > 0;
+      const presentRecords = data.records.filter((r: any) => r.status === "present");
       if (data.status === "finalized" || hasImages) {
         setAiResult({
           ai_used: true,
           mode: "real_ai",
           warning: null,
           images_processed: data.classroom_image_urls?.length ?? 0,
-          image_previews: data.classroom_image_urls ?? [],
+          image_previews: data.classroom_image_urls ?? [],      // stored annotated originals
+          annotated_image_urls: data.classroom_image_urls ?? [], // same — already annotated
           image_annotations: Array((data.classroom_image_urls ?? []).length).fill([]),
-          detected_faces: data.records.filter((r: any) => r.status === "present").length,
-          matched_faces: data.records.filter((r: any) => r.status === "present").length,
+          detected_faces: presentRecords.length, // best approximation from stored data
+          matched_faces: presentRecords.length,
           total_students: data.records.length,
           detection_results: data.records.map((r: any) => ({
             student_id: r.student_id,
@@ -592,7 +706,16 @@ export default function TakeAttendancePage() {
         return;
       }
 
-      setAiResult(result);
+      // Use annotated_image_urls if provided (full-quality baked annotations)
+      // Otherwise fall back to image_previews
+      const displayResult: AIResult = {
+        ...result,
+        image_previews: result.annotated_image_urls && result.annotated_image_urls.length > 0
+          ? result.annotated_image_urls
+          : result.image_previews,
+      };
+
+      setAiResult(displayResult);
       const init: Record<string, boolean> = {};
       result.detection_results.forEach(d => { init[d.student_id] = d.status === "present"; });
       setOverrides(init);
@@ -651,11 +774,10 @@ export default function TakeAttendancePage() {
       <Toast msg={toast} />
       <canvas ref={canvasRef} style={{ display: "none" }} />
 
-      {/* Lightbox full-screen annotated photo */}
+      {/* Lightbox full-screen annotated photo — plain img for native pixel quality */}
       {lightboxIdx !== null && aiResult && aiResult.image_previews[lightboxIdx] && (
-        <AnnotatedPhoto
+        <FullscreenImageViewer
           src={aiResult.image_previews[lightboxIdx]}
-          annotations={aiResult.image_annotations?.[lightboxIdx] ?? []}
           onClose={() => setLightboxIdx(null)}
         />
       )}
@@ -976,8 +1098,9 @@ export default function TakeAttendancePage() {
                   </div>
                 </div>
 
-                {/* Photos — show first photo full width, rest as strip */}
+                {/* Photos — show with baked annotations directly via <img>, no canvas redraw */}
                 {aiResult.image_previews.map((src, i) => {
+                  // image_previews is already the full-quality annotated version
                   const annotations = aiResult.image_annotations?.[i] ?? [];
                   const matched   = annotations.filter(a => a.matched).length;
                   const unmatched = annotations.filter(a => !a.matched).length;
@@ -992,7 +1115,12 @@ export default function TakeAttendancePage() {
                         borderTop: i > 0 ? "1px solid var(--border)" : undefined,
                       }}
                     >
-                      <AnnotatedPhoto src={src} annotations={annotations} />
+                      {/* Use plain <img> so browser renders at native pixel quality — no canvas downsampling */}
+                      <img
+                        src={src}
+                        alt={`Classroom photo ${i + 1}`}
+                        style={{ width: "100%", display: "block", imageRendering: "auto" }}
+                      />
 
                       {/* Face count overlay — bottom left */}
                       <div style={{
