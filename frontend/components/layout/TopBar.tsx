@@ -8,16 +8,17 @@ interface TopBarProps {
   rightAction?: React.ReactNode;
   showFilter?: boolean;
   onFilter?: () => void;
+  onBack?: () => void;
   subtitle?: string;
 }
 
-export default function TopBar({ title, showBack, rightAction, showFilter, onFilter, subtitle }: TopBarProps) {
+export default function TopBar({ title, showBack, rightAction, showFilter, onFilter, subtitle, onBack }: TopBarProps) {
   const router = useRouter();
   return (
     <header className="top-bar">
       <div style={{ flex: 1 }}>
         {showBack ? (
-          <button className="top-bar-back" onClick={() => router.back()}>
+          <button className="top-bar-back" onClick={onBack || (() => router.back())}>
             <ChevronLeft size={22} />
             {title}
           </button>

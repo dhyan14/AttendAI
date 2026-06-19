@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import TopBar from "@/components/layout/TopBar";
-import { Users, Upload, Plus, Search, Filter, Loader2, CheckCircle, AlertCircle, Trash2 } from "lucide-react";
+import { Users, Upload, Plus, Search, Filter, Loader2, CheckCircle, AlertCircle, Trash2, X } from "lucide-react";
 
 interface Student {
   id: string;
@@ -13,6 +13,8 @@ interface Student {
   batch: string | null;
   semester: number | null;
   dept_id: string;
+  email?: string;
+  profile_image_url?: string | null;
 }
 
 interface Department {
@@ -52,6 +54,9 @@ export default function AdminStudentsPage() {
   });
   const [adding, setAdding] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+
+  const [selectedStudentForProfile, setSelectedStudentForProfile] = useState<Student | null>(null);
+  const [showProfileModal, setShowProfileModal] = useState(false);
 
   useEffect(() => {
     async function loadDepts() {
@@ -274,15 +279,28 @@ export default function AdminStudentsPage() {
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {filteredStudents.map(s => (
-            <div key={s.id} className="card" style={{ display: "flex", alignItems: "center", justifyItems: "center", gap: 12 }}>
-              <div style={{
-                width: 44, height: 44, borderRadius: 10,
-                background: "var(--accent-dim)", color: "var(--accent)",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontWeight: 700, fontSize: 12
-              }}>
-                {s.roll_no}
-              </div>
+            <div
+              key={s.id}
+              className="card"
+              onClick={() => { setSelectedStudentForProfile(s); setShowProfileModal(true); }}
+              style={{ display: "flex", alignItems: "center", justifyItems: "center", gap: 12, cursor: "pointer" }}
+            >
+              {s.profile_image_url ? (
+                <img
+                  src={s.profile_image_url}
+                  alt={s.name}
+                  style={{ width: 44, height: 44, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }}
+                />
+              ) : (
+                <div style={{
+                  width: 44, height: 44, borderRadius: "50%",
+                  background: "var(--accent-dim)", color: "var(--accent)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontWeight: 700, fontSize: 16, flexShrink: 0
+                }}>
+                  {s.name.charAt(0)}
+                </div>
+              )}
               <div style={{ flex: 1 }}>
                 <h3 style={{ fontSize: 15, marginBottom: 2 }}>{s.name}</h3>
                 <div style={{ display: "flex", gap: 8, fontSize: 11, color: "var(--text-secondary)" }}>
@@ -294,7 +312,7 @@ export default function AdminStudentsPage() {
                 </div>
               </div>
               <div className="badge badge-muted" style={{ fontSize: 10 }}>
-                {s.enrollment_no || "No Enrollment"}
+                {s.roll_no}
               </div>
             </div>
           ))}
@@ -401,6 +419,78 @@ export default function AdminStudentsPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Student Profile Modal */}
+      {showProfileModal && selectedStudentForProfile && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div className="card" style={{ width: "100%", maxWidth: 390, position: "relative", padding: "24px 20px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <span style={{ fontWeight: 800, fontSize: 16 }}>Student Profile</span>
+              <button onClick={() => { setShowProfileModal(false); setSelectedStudentForProfile(null); }} style={{ background: "var(--bg-card-2)", border: "none", borderRadius: 8, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", cursor: "pointer" }}>
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Profile Avatar & Name */}
+            <div style={{ textAlign: "center", marginBottom: 24 }}>
+              {selectedStudentForProfile.profile_image_url ? (
+                <img
+                  src={selectedStudentForProfile.profile_image_url}
+                  alt={selectedStudentForProfile.name}
+                  style={{ width: 80, height: 80, borderRadius: "50%", objectFit: "cover", margin: "0 auto 12px", border: "2px solid var(--accent)" }}
+                />
+              ) : (
+                <div style={{
+                  width: 80, height: 80, borderRadius: "50%",
+                  background: "var(--accent-dim)", color: "var(--accent)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontWeight: 700, fontSize: 28, margin: "0 auto 12px"
+                }}>
+                  {selectedStudentForProfile.name.charAt(0)}
+                </div>
+              )}
+              <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>{selectedStudentForProfile.name}</h2>
+              <span className="badge badge-accent" style={{ fontSize: 11 }}>Student</span>
+            </div>
+
+            {/* Profile Info Details */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: 8 }}>
+                <span style={{ color: "var(--text-secondary)", fontSize: 13 }}>Email</span>
+                <span style={{ fontWeight: 600, fontSize: 13 }}>{selectedStudentForProfile.email || "—"}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: 8 }}>
+                <span style={{ color: "var(--text-secondary)", fontSize: 13 }}>Roll Number</span>
+                <span style={{ fontWeight: 600, fontSize: 13 }}>{selectedStudentForProfile.roll_no}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: 8 }}>
+                <span style={{ color: "var(--text-secondary)", fontSize: 13 }}>Enrollment No</span>
+                <span style={{ fontWeight: 600, fontSize: 13 }}>{selectedStudentForProfile.enrollment_no || "—"}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: 8 }}>
+                <span style={{ color: "var(--text-secondary)", fontSize: 13 }}>Department</span>
+                <span style={{ fontWeight: 600, fontSize: 13 }}>
+                  {departments.find(d => d.id === selectedStudentForProfile.dept_id)?.name || "Unknown Department"}
+                </span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: 8 }}>
+                <span style={{ color: "var(--text-secondary)", fontSize: 13 }}>Academic Class</span>
+                <span style={{ fontWeight: 600, fontSize: 13 }}>
+                  Sem {selectedStudentForProfile.semester || "?"} · Div {selectedStudentForProfile.division || "?"} · Batch {selectedStudentForProfile.batch || "?"}
+                </span>
+              </div>
+            </div>
+            
+            <button
+              onClick={() => { setShowProfileModal(false); setSelectedStudentForProfile(null); }}
+              className="btn btn-secondary"
+              style={{ width: "100%", marginTop: 24 }}
+            >
+              Close Profile
+            </button>
           </div>
         </div>
       )}

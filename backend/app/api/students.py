@@ -4,6 +4,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 import bcrypt
@@ -42,6 +43,7 @@ class StudentResponse(BaseModel):
     semester: Optional[int]
     dept_id: str
     profile_image_url: Optional[str]
+    email: Optional[str] = None
     attendance_percentage: Optional[float] = None
 
     class Config:
@@ -79,10 +81,15 @@ async def list_students(
     
     query = select(
         Student,
+        User.email,
         func.count(AttendanceRecord.id).label("total_count"),
         func.sum(present_cases).label("present_count")
+    ).join(
+        User, User.id == Student.user_id
     ).outerjoin(
         AttendanceRecord, AttendanceRecord.student_id == Student.id
+    ).options(
+        selectinload(Student.face_embeddings)
     )
     
     if dept_uuid:
@@ -94,7 +101,7 @@ async def list_students(
     if semester:
         query = query.where(Student.semester == semester)
         
-    query = query.group_by(Student.id).order_by(Student.roll_no)
+    query = query.group_by(Student.id, User.email).order_by(Student.roll_no)
     
     result = await db.execute(query)
     rows = result.all()
@@ -106,6 +113,12 @@ async def list_students(
         present = row.present_count or 0
         pct = round((present / total * 100), 1) if total > 0 else 0.0
         
+        front_img = None
+        for fe in s.face_embeddings:
+            if fe.angle == "front":
+                front_img = fe.image_url
+                break
+        
         students_out.append(
             StudentResponse(
                 id=str(s.id),
@@ -116,7 +129,8 @@ async def list_students(
                 batch=s.batch,
                 semester=s.semester,
                 dept_id=str(s.dept_id),
-                profile_image_url=s.profile_image_url,
+                profile_image_url=s.profile_image_url or front_img,
+                email=row.email,
                 attendance_percentage=pct
             )
         )
@@ -162,6 +176,7 @@ async def create_student(
         semester=student.semester,
         dept_id=str(student.dept_id),
         profile_image_url=student.profile_image_url,
+        email=user.email,
     )
 
 

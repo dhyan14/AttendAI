@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import TopBar from "@/components/layout/TopBar";
-import { Building2, Users, User, TrendingUp, Loader2, Plus, AlertCircle } from "lucide-react";
+import { Building2, Users, User, TrendingUp, Loader2, Plus, AlertCircle, ChevronLeft, ChevronRight, BookOpen, Trash2, Check, X } from "lucide-react";
 
 interface DeptWithStats {
   id: string;
@@ -26,6 +26,19 @@ export default function AdminDepartmentsPage() {
   const [newDept, setNewDept] = useState({ name: "", code: "", institute_name: "" });
   const [adding, setAdding] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+
+  const [selectedDept, setSelectedDept] = useState<DeptWithStats | null>(null);
+  const [selectedSemester, setSelectedSemester] = useState<number | null>(null);
+  const [subjects, setSubjects] = useState<any[]>([]);
+  const [subjectsLoading, setSubjectsLoading] = useState(false);
+  const [modal, setModal] = useState<"subject" | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [fSubN, setFSubN] = useState("");
+  const [fSubC, setFSubC] = useState("");
+  const [toast, setToast] = useState("");
+
+  const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(""), 3500); };
+  const closeModal = () => { setModal(null); setSaving(false); };
 
   useEffect(() => {
     async function loadData() {
@@ -83,6 +96,219 @@ export default function AdminDepartmentsPage() {
     }
   }
 
+  async function openSemester(sem: number) {
+    if (!selectedDept) return;
+    setSelectedSemester(sem);
+    setSubjectsLoading(true);
+    try {
+      const r = await apiFetch(`/subjects/?dept_id=${selectedDept.id}&semester=${sem}`);
+      if (r.ok) setSubjects(await r.json());
+    } catch {}
+    finally { setSubjectsLoading(false); }
+  }
+
+  async function createSubject() {
+    if (!selectedDept || !selectedSemester || !fSubN || !fSubC) return;
+    setSaving(true);
+    try {
+      const res = await apiFetch("/subjects/", {
+        method: "POST",
+        body: JSON.stringify({
+          name: fSubN,
+          code: fSubC.toUpperCase(),
+          dept_id: selectedDept.id,
+          semester: selectedSemester
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Failed to add subject");
+      }
+      const s = await res.json();
+      showToast(`✓ "${s.name}" added`);
+      closeModal();
+      setSubjects(p => [...p, s]);
+    } catch (e: any) { showToast("✗ " + e.message); }
+    finally { setSaving(false); }
+  }
+
+  async function deleteSubject(id: string, name: string) {
+    if (!confirm(`Delete subject "${name}"?`)) return;
+    try {
+      const res = await apiFetch(`/subjects/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Failed to delete subject");
+      }
+      showToast(`✓ "${name}" deleted`);
+      setSubjects(p => p.filter(s => s.id !== id));
+    } catch (e: any) { showToast("✗ " + e.message); }
+  }
+
+  if (selectedDept) {
+    const SEMESTERS = [1, 2, 3, 4, 5, 6, 7, 8];
+    const SEM_COLORS = ["#38bdf8", "#22d37a", "#a78bfa", "#f5c842", "#ff9f0a", "#f05a5a", "#e879f9", "#6ee7b7"];
+    return (
+      <div style={{ minHeight: "100dvh", background: "var(--bg)", paddingBottom: 100 }}>
+        <Toast msg={toast} />
+        <TopBar
+          title={selectedSemester !== null ? `Semester ${selectedSemester} Subjects` : `${selectedDept.name} — Semesters`}
+          showBack={true}
+          onBack={() => {
+            if (selectedSemester !== null) {
+              setSelectedSemester(null);
+              setSubjects([]);
+            } else {
+              setSelectedDept(null);
+            }
+          }}
+        />
+
+        {/* Header summary info */}
+        <div style={{ padding: "0 16px", marginTop: 16 }} className="fade-up">
+          <div className="card" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ fontSize: 10, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5 }}>
+              Department Details
+            </div>
+            <div style={{ fontWeight: 800, fontSize: 18, letterSpacing: -0.3 }}>
+              {selectedDept.name}
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <span style={{ fontSize: 11, background: "var(--accent-dim)", color: "var(--accent)", padding: "2px 8px", borderRadius: 99, fontWeight: 700 }}>
+                {selectedDept.code}
+              </span>
+              <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+                {selectedDept.institute_name || "Institute of Technology"}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ padding: 16 }}>
+          {selectedSemester === null ? (
+            <div className="fade-up">
+              <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 18 }}>
+                Select a semester to view and manage its subjects.
+              </p>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                {SEMESTERS.map((sem, idx) => (
+                  <button
+                    key={sem}
+                    onClick={() => openSemester(sem)}
+                    style={{
+                      background: `linear-gradient(135deg, ${SEM_COLORS[idx % SEM_COLORS.length]}12, ${SEM_COLORS[idx % SEM_COLORS.length]}06)`,
+                      border: `1px solid ${SEM_COLORS[idx % SEM_COLORS.length]}30`,
+                      borderRadius: 16, padding: "20px 16px",
+                      cursor: "pointer", textAlign: "left",
+                      transition: "transform 0.15s, box-shadow 0.15s",
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    <div style={{ fontSize: 28, fontWeight: 900, color: SEM_COLORS[idx % SEM_COLORS.length], letterSpacing: -1, marginBottom: 4 }}>
+                      {sem}
+                    </div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)" }}>Semester</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 10 }}>
+                      <BookOpen size={12} style={{ color: SEM_COLORS[idx % SEM_COLORS.length] }} />
+                      <span style={{ fontSize: 11, color: "var(--text-muted)" }}>View subjects</span>
+                      <ChevronRight size={11} style={{ color: SEM_COLORS[idx % SEM_COLORS.length], marginLeft: "auto" }} />
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="fade-up">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                <div>
+                  <h3 style={{ fontSize: 16, fontWeight: 700 }}>Subjects</h3>
+                  <p style={{ fontSize: 12, color: "var(--text-secondary)" }}>Semester {selectedSemester}</p>
+                </div>
+                <button
+                  onClick={() => { setFSubN(""); setFSubC(""); setModal("subject"); }}
+                  className="btn btn-primary"
+                  style={{ width: "auto", padding: "8px 14px", fontSize: 13, gap: 4, borderRadius: 10 }}
+                >
+                  <Plus size={15} /> Add Subject
+                </button>
+              </div>
+
+              {subjectsLoading ? (
+                <div style={{ display: "flex", justifyContent: "center", padding: "48px 0" }}>
+                  <Loader2 size={28} className="animate-spin" style={{ color: "var(--accent)", animation: "spin 1s linear infinite" }} />
+                </div>
+              ) : subjects.length === 0 ? (
+                <div className="card" style={{ textAlign: "center", padding: "48px 16px" }}>
+                  <div style={{ color: "var(--text-muted)", display: "flex", justifyContent: "center", marginBottom: 10 }}>
+                    <BookOpen size={32} />
+                  </div>
+                  <p style={{ color: "var(--text-muted)", fontSize: 13 }}>No subjects in Semester {selectedSemester} yet.</p>
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {subjects.map((s) => (
+                    <div key={s.id} className="card" style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <div style={{
+                        width: 46, height: 46, borderRadius: 12, flexShrink: 0,
+                        background: `${SEM_COLORS[(selectedSemester - 1) % SEM_COLORS.length]}15`,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontWeight: 800, fontSize: 10, color: SEM_COLORS[(selectedSemester - 1) % SEM_COLORS.length],
+                        letterSpacing: -0.3,
+                      }}>
+                        {s.code}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: 14 }}>{s.name}</div>
+                        <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
+                          {s.code} · Semester {s.semester}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => deleteSubject(s.id, s.name)}
+                        style={{
+                          width: 32, height: 32, borderRadius: 8, border: "none", flexShrink: 0,
+                          background: `var(--danger-dim)`, color: "var(--danger)", cursor: "pointer",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                        }}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Add Subject Modal */}
+        {modal === "subject" && (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+            <div className="card" style={{ width: "100%", maxWidth: 390, position: "relative" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                <span style={{ fontWeight: 800, fontSize: 16 }}>Add Subject (Sem {selectedSemester})</span>
+                <button onClick={closeModal} style={{ background: "var(--bg-card-2)", border: "none", borderRadius: 8, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", cursor: "pointer" }}>
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Subject Name</label>
+                <input className="input" placeholder="e.g. Data Structures" value={fSubN} onChange={e => setFSubN(e.target.value)} required />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Subject Code</label>
+                <input className="input" placeholder="e.g. CS301" value={fSubC} onChange={e => setFSubC(e.target.value.toUpperCase())} maxLength={12} required />
+              </div>
+              <button className="btn btn-primary" onClick={createSubject} disabled={saving || !fSubN || !fSubC}>
+                {saving ? "Adding..." : "Add Subject"}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="page-content fade-up" style={{ paddingBottom: 100 }}>
       <TopBar title="Departments" showBack={true} />
@@ -122,7 +348,8 @@ export default function AdminDepartmentsPage() {
               <div
                 key={d.id}
                 className="card"
-                style={{ borderLeft: `4px solid ${color}` }}
+                style={{ borderLeft: `4px solid ${color}`, cursor: "pointer" }}
+                onClick={() => setSelectedDept(d)}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
                   <div>
@@ -210,7 +437,27 @@ export default function AdminDepartmentsPage() {
         </div>
       )}
 
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes slideDown { from { opacity:0; transform:translateX(-50%) translateY(-8px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
+      `}</style>
+    </div>
+  );
+}
+
+function Toast({ msg }: { msg: string }) {
+  if (!msg) return null;
+  const ok = msg.startsWith("✓");
+  return (
+    <div style={{
+      position: "fixed", top: 20, left: "50%", transform: "translateX(-50%)",
+      background: ok ? "var(--success)" : "var(--danger)",
+      color: "white", padding: "10px 22px", borderRadius: 99,
+      fontSize: 13, fontWeight: 700, zIndex: 9999,
+      boxShadow: "0 4px 24px rgba(0,0,0,0.4)", whiteSpace: "nowrap",
+      animation: "slideDown 0.3s ease",
+    }}>
+      {msg}
     </div>
   );
 }

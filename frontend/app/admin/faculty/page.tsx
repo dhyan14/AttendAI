@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import TopBar from "@/components/layout/TopBar";
-import { User, Plus, Search, Loader2, Award, Briefcase, Mail, AlertCircle } from "lucide-react";
+import { User, Plus, Search, Loader2, Award, Briefcase, Mail, AlertCircle, X } from "lucide-react";
 
 interface Faculty {
   id: string;
@@ -37,6 +37,9 @@ export default function AdminFacultyPage() {
   });
   const [adding, setAdding] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+
+  const [selectedFacultyForProfile, setSelectedFacultyForProfile] = useState<Faculty | null>(null);
+  const [showProfileModal, setShowProfileModal] = useState(false);
 
   useEffect(() => {
     async function loadDepts() {
@@ -181,7 +184,12 @@ export default function AdminFacultyPage() {
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {filteredFaculty.map(f => (
-            <div key={f.id} className="card" style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div
+              key={f.id}
+              className="card"
+              onClick={() => { setSelectedFacultyForProfile(f); setShowProfileModal(true); }}
+              style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}
+            >
               <div style={{
                 width: 44, height: 44, borderRadius: "50%",
                 background: "var(--accent-dim)", color: "var(--accent)",
@@ -250,6 +258,60 @@ export default function AdminFacultyPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Faculty Profile Modal */}
+      {showProfileModal && selectedFacultyForProfile && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div className="card" style={{ width: "100%", maxWidth: 390, position: "relative", padding: "24px 20px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <span style={{ fontWeight: 800, fontSize: 16 }}>Faculty Profile</span>
+              <button onClick={() => { setShowProfileModal(false); setSelectedFacultyForProfile(null); }} style={{ background: "var(--bg-card-2)", border: "none", borderRadius: 8, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", cursor: "pointer" }}>
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Profile Avatar & Name */}
+            <div style={{ textAlign: "center", marginBottom: 24 }}>
+              <div style={{
+                width: 80, height: 80, borderRadius: "50%",
+                background: "var(--accent-dim)", color: "var(--accent)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontWeight: 700, fontSize: 28, margin: "0 auto 12px"
+              }}>
+                {selectedFacultyForProfile.name.charAt(0)}
+              </div>
+              <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>{selectedFacultyForProfile.name}</h2>
+              <span className="badge badge-accent" style={{ fontSize: 11 }}>Faculty Member</span>
+            </div>
+
+            {/* Profile Info Details */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: 8 }}>
+                <span style={{ color: "var(--text-secondary)", fontSize: 13 }}>Designation</span>
+                <span style={{ fontWeight: 600, fontSize: 13 }}>{selectedFacultyForProfile.designation || "Faculty Member"}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: 8 }}>
+                <span style={{ color: "var(--text-secondary)", fontSize: 13 }}>Email</span>
+                <span style={{ fontWeight: 600, fontSize: 13 }}>{selectedFacultyForProfile.email}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: 8 }}>
+                <span style={{ color: "var(--text-secondary)", fontSize: 13 }}>Department</span>
+                <span style={{ fontWeight: 600, fontSize: 13 }}>
+                  {departments.find(d => d.id === selectedFacultyForProfile.dept_id)?.name || "Unknown Department"}
+                </span>
+              </div>
+            </div>
+            
+            <button
+              onClick={() => { setShowProfileModal(false); setSelectedFacultyForProfile(null); }}
+              className="btn btn-secondary"
+              style={{ width: "100%", marginTop: 24 }}
+            >
+              Close Profile
+            </button>
           </div>
         </div>
       )}
