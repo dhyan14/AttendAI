@@ -19,14 +19,15 @@ import numpy as np
 import asyncio
 import concurrent.futures
 from typing import Optional
+from app.config import settings
 
 # ─── Module-level constants (importable by other modules) ─────────────────────
-MATCH_THRESHOLD   = 0.40          # cosine similarity threshold for recognition match
-DET_SIZE          = (480, 480)    # SCRFD detector input resolution — faster than 640×640
+MATCH_THRESHOLD   = settings.FACE_RECOGNITION_THRESHOLD  # dynamically loaded threshold (defaults to 0.35)
+DET_SIZE          = (640, 640)    # SCRFD detector input resolution (reverted for accuracy)
 DET_SCORE_THRESH  = 0.35          # minimum detection confidence
-UPSCALE_FACTOR    = 1.5           # reduced from 2.0 — less memory, faster resize
-MAX_DET_WIDTH     = 1920          # cap upscaled width
-TILE_ROWS, TILE_COLS = 1, 2       # 1×2 grid → 3 total passes (1 full + 2 tiles)
+UPSCALE_FACTOR    = 2.0           # upscale before tiled detection (reverted to 2.0x for far faces)
+MAX_DET_WIDTH     = 2560          # cap upscaled width
+TILE_ROWS, TILE_COLS = 1, 2       # 1×2 grid → 3 total passes (fast and accurate)
 TILE_OVERLAP      = 0.20
 
 
