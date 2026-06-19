@@ -172,57 +172,79 @@ class FaceService:
           - Pass 2: Left half of upscaled image  → catches left-side far faces
           - Pass 3: Right half of upscaled image → catches right-side far faces
           - NMS to deduplicate overlapping detections
+          - CRITICAL: remap bboxes back to ORIGINAL image coordinates before returning
         """
         import cv2
         h_orig, w_orig = img.shape[:2]
         all_detections: list = []
 
         # ── Pre-resize: cap to 1920px wide BEFORE upscale ─────────────────
-        # Without this cap, a 4032×3024 photo gets upscaled to 8064×6048 → very slow
+        # Without this cap, a 4032×3024 photo gets upscaled to 8064×6048 → very slow.
+        # IMPORTANT: track pre_scale so we can map detections back to ORIGINAL coords.
         MAX_INPUT_WIDTH = 1920
+        pre_scale = 1.0   # scale factor: pre-resized / original
         if w_orig > MAX_INPUT_WIDTH:
-            cap_scale = MAX_INPUT_WIDTH / w_orig
-            cap_h = int(h_orig * cap_scale)
+            pre_scale = MAX_INPUT_WIDTH / w_orig
+            cap_h = int(h_orig * pre_scale)
             img = cv2.resize(img, (MAX_INPUT_WIDTH, cap_h), interpolation=cv2.INTER_LINEAR)
-            h_orig, w_orig = img.shape[:2]
-            print(f"[FaceService] Pre-resized to {w_orig}x{h_orig} for detection")
+            new_h, new_w = img.shape[:2]
+            print(f"[FaceService] Pre-resized {w_orig}x{h_orig} → {new_w}x{new_h} (pre_scale={pre_scale:.3f})")
 
         # ── Pass 1: Full image at UPSCALE_FACTOR upscale ─────────────────
         img_up, scale = self._upscale(img, UPSCALE_FACTOR)
         h_up, w_up = img_up.shape[:2]
-        print(f"[FaceService] Upscaled to {w_up}x{h_up} (scale={scale:.2f})")
+        print(f"[FaceService] Upscaled to {w_up}x{h_up} (det_scale={scale:.2f})")
 
         dets_full = self._detect_on_img(img_up)
         for det in dets_full:
             b = det["bbox"]
+            # Undo upscale → coords now in pre-resized (1920px) space
             det["bbox"] = [b[0]/scale, b[1]/scale, b[2]/scale, b[3]/scale]
         all_detections.extend(dets_full)
 
         # ── Pass 2 & 3: 1×2 horizontal tile grid (left + right) ──────────
-        # Tiles split the upscaled image into left and right halves with 20% overlap
         tile_w = int(w_up / (TILE_COLS - TILE_OVERLAP * (TILE_COLS - 1)))
         step_w = int(tile_w * (1 - TILE_OVERLAP))
 
         for col in range(TILE_COLS):
             x1 = min(col * step_w, w_up - tile_w)
             x2 = min(x1 + tile_w, w_up)
-            tile = img_up[0:h_up, x1:x2]   # full height, partial width
+            tile = img_up[0:h_up, x1:x2]
             if tile.size == 0:
                 continue
 
             tile_dets = self._detect_on_img(tile)
             for det in tile_dets:
                 b = det["bbox"]
-                ox1 = (b[0] + x1) / scale
-                oy1 = (b[1]      ) / scale
-                ox2 = (b[2] + x1) / scale
-                oy2 = (b[3]      ) / scale
-                det["bbox"] = [ox1, oy1, ox2, oy2]
+                # Undo tile offset + upscale → coords now in pre-resized (1920px) space
+                det["bbox"] = [
+                    (b[0] + x1) / scale,
+                    (b[1]     ) / scale,
+                    (b[2] + x1) / scale,
+                    (b[3]     ) / scale,
+                ]
             all_detections.extend(tile_dets)
 
         # ── Deduplicate with NMS ───────────────────────────────────────────
         unique = self._nms(all_detections, iou_thresh=0.40)
         print(f"[FaceService] Tiled detection: {len(all_detections)} raw → {len(unique)} unique faces")
+
+        # ── Map back to ORIGINAL image coordinates ─────────────────────────
+        # At this point bboxes are in pre-resized 1920px space.
+        # Divide by pre_scale to restore full-resolution original coordinates.
+        # Without this step, boxes drawn on the 4032px original would be shifted
+        # to the upper-left (placed as if the image were only 1920px wide).
+        if pre_scale != 1.0:
+            for det in unique:
+                b = det["bbox"]
+                det["bbox"] = [
+                    b[0] / pre_scale,
+                    b[1] / pre_scale,
+                    b[2] / pre_scale,
+                    b[3] / pre_scale,
+                ]
+            print(f"[FaceService] Bboxes remapped to original coords (÷pre_scale={pre_scale:.3f})")
+
         return unique
 
     def _process_single_image(self, image_bytes: bytes) -> list:
