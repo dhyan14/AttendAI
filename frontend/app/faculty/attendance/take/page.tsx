@@ -473,7 +473,7 @@ export default function TakeAttendancePage() {
   // ── Create lecture + run AI ───────────────────────────────
   const startRecognition = async () => {
     if (!selSubject || !lecNo || photos.length === 0) return;
-    if (!division.trim()) { showToast("✗ Enter a division (e.g. A)"); return; }
+    if (!division) { showToast("✗ Please select a division"); return; }
 
     setCreating(true);
     let lec: Lecture;
@@ -638,42 +638,114 @@ export default function TakeAttendancePage() {
             {/* Lecture details */}
             <div className="card" style={{ margin: 0 }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.8 }}>Lecture Details</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <div>
-                  <label style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, display: "block", marginBottom: 4 }}>Lecture No *</label>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-card-2)" }}>
-                    <Hash size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
-                    <input
-                      type="number" min="1" value={lecNo}
-                      onChange={e => setLecNo(e.target.value)}
-                      placeholder="e.g. 1"
-                      style={{ background: "none", border: "none", outline: "none", fontSize: 14, fontWeight: 700, color: "var(--text)", fontFamily: "inherit", width: "100%" }}
-                    />
-                  </div>
+
+              {/* Lecture Number — quick-pick buttons 1–8 */}
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, display: "block", marginBottom: 8 }}>Lecture No *</label>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(8, 1fr)", gap: 6 }}>
+                  {[1,2,3,4,5,6,7,8].map(n => {
+                    const selected = lecNo === String(n);
+                    return (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => setLecNo(String(n))}
+                        style={{
+                          padding: "10px 4px",
+                          borderRadius: 10,
+                          border: selected ? "2px solid var(--accent)" : "1.5px solid var(--border)",
+                          background: selected ? "var(--accent-dim)" : "var(--bg-card-2)",
+                          color: selected ? "var(--accent)" : "var(--text-muted)",
+                          fontWeight: 800,
+                          fontSize: 15,
+                          cursor: "pointer",
+                          fontFamily: "inherit",
+                          transition: "all 0.18s cubic-bezier(0.34,1.2,0.64,1)",
+                          transform: selected ? "scale(1.08)" : "scale(1)",
+                          boxShadow: selected ? "0 0 12px rgba(0,212,255,0.25)" : "none",
+                        }}
+                      >
+                        {n}
+                      </button>
+                    );
+                  })}
                 </div>
+                {/* Show currently selected */}
+                {lecNo && (
+                  <div style={{ marginTop: 6, fontSize: 11, color: "var(--accent)", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
+                    <Hash size={11} /> Lecture {lecNo} selected
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                {/* Division — dropdown */}
                 <div>
                   <label style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, display: "block", marginBottom: 4 }}>Division *</label>
-                  <input
-                    type="text" value={division}
-                    onChange={e => setDivision(e.target.value)}
-                    placeholder="e.g. A" maxLength={5}
-                    style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-card-2)", outline: "none", fontSize: 14, fontWeight: 700, color: "var(--text)", fontFamily: "inherit", boxSizing: "border-box" }}
-                  />
+                  <div style={{ position: "relative" }}>
+                    <select
+                      value={division}
+                      onChange={e => setDivision(e.target.value)}
+                      style={{
+                        width: "100%",
+                        padding: "10px 36px 10px 12px",
+                        borderRadius: 10,
+                        border: division ? "1.5px solid var(--accent)" : "1px solid var(--border)",
+                        background: division ? "var(--accent-dim)" : "var(--bg-card-2)",
+                        outline: "none",
+                        fontSize: 14,
+                        fontWeight: 700,
+                        color: division ? "var(--accent)" : "var(--text-muted)",
+                        fontFamily: "inherit",
+                        appearance: "none",
+                        cursor: "pointer",
+                        boxSizing: "border-box",
+                        transition: "all 0.2s",
+                        boxShadow: division ? "0 0 10px rgba(0,212,255,0.15)" : "none",
+                      }}
+                    >
+                      <option value="">Choose...</option>
+                      {["All", "A", "B", "C", "D", "E"].map(d => (
+                        <option key={d} value={d}>{d === "All" ? "All Divisions" : `Division ${d}`}</option>
+                      ))}
+                    </select>
+                    {/* Custom chevron */}
+                    <svg
+                      style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}
+                      width="14" height="14" viewBox="0 0 24 24" fill="none"
+                      stroke={division ? "var(--accent)" : "var(--text-muted)"} strokeWidth="2.5"
+                    >
+                      <path d="m6 9 6 6 6-6"/>
+                    </svg>
+                  </div>
                 </div>
+
+                {/* Batch */}
                 <div>
                   <label style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, display: "block", marginBottom: 4 }}>Batch</label>
-                  <select
-                    value={batch} onChange={e => setBatch(e.target.value)}
-                    style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-card-2)", outline: "none", fontSize: 13, color: "var(--text)", fontFamily: "inherit", appearance: "none" }}
-                  >
-                    {["All", "B1", "B2", "B3", "B4"].map(b => <option key={b} value={b}>{b}</option>)}
-                  </select>
+                  <div style={{ position: "relative" }}>
+                    <select
+                      value={batch} onChange={e => setBatch(e.target.value)}
+                      style={{ width: "100%", padding: "10px 36px 10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-card-2)", outline: "none", fontSize: 13, color: "var(--text-primary)", fontFamily: "inherit", appearance: "none", cursor: "pointer", boxSizing: "border-box" }}
+                    >
+                      {["All", "B1", "B2", "B3", "B4"].map(b => <option key={b} value={b}>{b}</option>)}
+                    </select>
+                    <svg
+                      style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}
+                      width="14" height="14" viewBox="0 0 24 24" fill="none"
+                      stroke="var(--text-muted)" strokeWidth="2.5"
+                    >
+                      <path d="m6 9 6 6 6-6"/>
+                    </svg>
+                  </div>
                 </div>
-                <div>
+
+                {/* Date */}
+                <div style={{ gridColumn: "span 2" }}>
                   <label style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, display: "block", marginBottom: 4 }}>Date</label>
                   <input
                     type="date" value={lecDate} onChange={e => setLecDate(e.target.value)}
-                    style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-card-2)", outline: "none", fontSize: 13, color: "var(--text)", fontFamily: "inherit", boxSizing: "border-box" }}
+                    style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-card-2)", outline: "none", fontSize: 13, color: "var(--text-primary)", fontFamily: "inherit", boxSizing: "border-box" }}
                   />
                 </div>
               </div>
