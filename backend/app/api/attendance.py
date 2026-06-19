@@ -68,6 +68,7 @@ class LectureDetailResponse(BaseModel):
     time: str
     status: str
     records: List[AttendanceRecordResponse]
+    classroom_image_urls: List[str] = []
 
 
 class FinalizeRequest(BaseModel):
@@ -279,7 +280,8 @@ async def get_lecture_details(
         date=row.Lecture.date.strftime("%Y-%m-%d"),
         time=row.Lecture.date.strftime("%I:%M %p"),
         status=row.Lecture.status.value,
-        records=records
+        records=records,
+        classroom_image_urls=row.Lecture.classroom_image_urls or []
     )
 
 
@@ -319,6 +321,70 @@ async def finalize_lecture(
     await db.commit()
 
     return {"message": "Attendance successfully finalized", "present_count": present_count}
+
+
+# ─── AI Attendance (parallel, speed-optimized) ─────────────
+
+
+def draw_annotations_on_image(img_pil, face_boxes):
+    from PIL import ImageDraw, ImageFont
+    
+    annotated = img_pil.copy()
+    draw = ImageDraw.Draw(annotated)
+    
+    def get_font(size):
+        try:
+            return ImageFont.truetype("arial.ttf", size)
+        except Exception:
+            return ImageFont.load_default()
+            
+    for fb in face_boxes:
+        bbox = fb.get("bbox")
+        if not bbox or len(bbox) != 4:
+            continue
+        x1, y1, x2, y2 = bbox
+        bw = x2 - x1
+        bh = y2 - y1
+        if bw <= 0 or bh <= 0:
+            continue
+            
+        matched = fb.get("matched", False)
+        # Harmonious colors matching the frontend
+        color = (34, 211, 122) if matched else (255, 69, 58)
+        line_width = max(1, min(round(bw / 60), 2))
+        
+        draw.rectangle([x1, y1, x2, y2], outline=color, width=line_width)
+        
+        student_name = fb.get("student_name")
+        roll_no = fb.get("roll_no")
+        confidence = fb.get("confidence", 0.0)
+        
+        if matched:
+            label = f"{roll_no or student_name} {round(confidence * 100)}%"
+        else:
+            label = f"Unknown {round(confidence * 100)}%"
+            
+        font_size = max(8, min(round(bw * 0.12), 12))
+        font = get_font(font_size)
+        
+        try:
+            text_bbox = draw.textbbox((0, 0), label, font=font)
+            tw = text_bbox[2] - text_bbox[0]
+            th = text_bbox[3] - text_bbox[1]
+        except AttributeError:
+            tw, th = draw.textsize(label, font=font)
+            
+        px = max(2, round(font_size * 0.3))
+        py = max(1, round(font_size * 0.15))
+        tag_h = th + py * 2
+        
+        tag_y = y1 - tag_h if y1 - tag_h >= 0 else y2
+        tag_x = max(0, min(x1, annotated.width - tw - px * 2))
+        
+        draw.rectangle([tag_x, tag_y, tag_x + tw + px * 2, tag_y + tag_h], fill=color)
+        draw.text((tag_x + px, tag_y + py), label, fill=(255, 255, 255), font=font)
+        
+    return annotated
 
 
 # ─── AI Attendance (parallel, speed-optimized) ─────────────
@@ -521,9 +587,26 @@ async def take_attendance_ai(
         # Total latency ≈ single slowest image, not sum of all images
         results = await asyncio.gather(*[_process_one(raw) for raw in raw_images])
 
+        annotated_previews = []
         for preview_b64, face_boxes in results:
             if preview_b64:
                 image_previews.append(preview_b64)
+                # Create server-side annotated preview to store in database
+                try:
+                    import io as _io
+                    from PIL import Image as PILImage
+                    # strip data:image/jpeg;base64,
+                    header, encoded = preview_b64.split(",", 1)
+                    img_data = base64.b64decode(encoded)
+                    img_pil = PILImage.open(_io.BytesIO(img_data)).convert("RGB")
+                    annotated_pil = draw_annotations_on_image(img_pil, face_boxes)
+                    buf = _io.BytesIO()
+                    annotated_pil.save(buf, format="JPEG", quality=82)
+                    annotated_b64 = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+                    annotated_previews.append(annotated_b64)
+                except Exception as de:
+                    print(f"[AI] Error drawing server-side annotations: {de}")
+                    annotated_previews.append(preview_b64)
             image_annotations.append(face_boxes)
             # Accumulate — keep highest confidence per student across all images
             for fb in face_boxes:
@@ -590,6 +673,11 @@ async def take_attendance_ai(
             "confidence": confidence,
             "source": "ai",
         })
+
+    if use_ai:
+        lecture.classroom_image_urls = annotated_previews
+    else:
+        lecture.classroom_image_urls = image_previews
 
     lecture.present_count = present_count
     await db.commit()

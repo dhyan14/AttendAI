@@ -398,13 +398,77 @@ export default function TakeAttendancePage() {
   const [finalizing, setFinalizing] = useState(false);
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null); // full-screen image index
 
-  // ── Load subjects ─────────────────────────────────────────
+  // ── Load subjects & Existing Lecture ───────────────────────
+  const [loadingExisting, setLoadingExisting] = useState(false);
+
+  const loadExistingLecture = useCallback(async (lecId: string) => {
+    setLoadingExisting(true);
+    try {
+      const res = await apiFetch(`/attendance/lectures/${lecId}`);
+      if (!res.ok) {
+        showToast("✗ Failed to load lecture details");
+        return;
+      }
+      const data = await res.json();
+      setLecture({
+        id: data.id,
+        subject_name: data.subject_name,
+        subject_code: data.subject_code,
+        division: data.division,
+        batch: data.batch,
+        lecture_no: data.lecture_no,
+        date: data.date,
+        status: data.status,
+        total_students: data.records.length,
+        present_count: data.records.filter((r: any) => r.status === "present").length,
+      });
+
+      const init: Record<string, boolean> = {};
+      data.records.forEach((r: any) => {
+        init[r.student_id] = r.status === "present";
+      });
+      setOverrides(init);
+
+      setAiResult({
+        ai_used: true,
+        mode: "real_ai",
+        warning: null,
+        images_processed: data.classroom_image_urls?.length ?? 0,
+        image_previews: data.classroom_image_urls ?? [],
+        image_annotations: Array((data.classroom_image_urls ?? []).length).fill([]),
+        detected_faces: data.records.filter((r: any) => r.status === "present").length,
+        matched_faces: data.records.filter((r: any) => r.status === "present").length,
+        total_students: data.records.length,
+        detection_results: data.records.map((r: any) => ({
+          student_id: r.student_id,
+          student_name: r.student_name,
+          roll_no: r.roll_no,
+          status: r.status,
+          confidence: r.confidence ?? 1.0,
+        })),
+      });
+
+      setStep(3);
+    } catch (err) {
+      console.error(err);
+      showToast("✗ Error loading existing lecture");
+    } finally {
+      setLoadingExisting(false);
+    }
+  }, []);
+
   useEffect(() => {
     apiFetch("/subjects/")
       .then(r => r.ok ? r.json() : [])
       .then(setSubjects)
       .catch(() => {});
-  }, []);
+
+    const params = new URLSearchParams(window.location.search);
+    const lecId = params.get("lecture_id");
+    if (lecId) {
+      loadExistingLecture(lecId);
+    }
+  }, [loadExistingLecture]);
 
   // ── Photo helpers ─────────────────────────────────────────
   const addPhotos = (files: FileList | null) => {
@@ -543,6 +607,23 @@ export default function TakeAttendancePage() {
   const presentCount  = Object.values(overrides).filter(Boolean).length;
   const totalStudents = aiResult?.total_students ?? 0;
   const canStart      = !!selSubject && !!lecNo && !!division && photos.length > 0;
+
+  if (loadingExisting) {
+    return (
+      <div className="take-container" style={{ margin: "0 auto", padding: "80px 16px 120px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "60dvh", gap: 14 }}>
+        <Toast msg={toast} />
+        <div style={{
+          width: 56, height: 56, borderRadius: 16,
+          background: "var(--accent-dim)", border: "1px solid var(--border-accent)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <Loader2 size={26} style={{ color: "var(--accent)", animation: "spin 1s linear infinite" }} />
+        </div>
+        <p style={{ color: "var(--text-secondary)", fontSize: 14 }}>Loading lecture details...</p>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
 
   return (
     <div className="take-container" style={{ margin: "0 auto", padding: "20px 16px 120px" }}>
