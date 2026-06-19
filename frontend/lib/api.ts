@@ -3,6 +3,27 @@ export const API_URL =
   process.env.NEXT_PUBLIC_API_URL ||
   "https://attendai-production-f6cf.up.railway.app";
 
+/** Direct fetch for FormData endpoints — bypasses apiFetch's manual redirect
+ *  which can consume the FormData stream before it reaches the server. */
+export async function apiFetchForm(
+  path: string,
+  body: FormData
+): Promise<Response> {
+  const token = typeof window !== "undefined"
+    ? localStorage.getItem("access_token")
+    : null;
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  // Use redirect:"follow" so browser handles 307 redirect automatically
+  // while keeping the same body (browser re-sends FormData on 307)
+  return fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers,
+    body,
+    redirect: "follow",
+  });
+}
+
 export async function apiFetch(
   path: string,
   options: RequestInit = {}

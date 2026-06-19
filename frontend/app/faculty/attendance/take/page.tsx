@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, apiFetchForm } from "@/lib/api";
 import {
   Upload, Camera, Trash2, CheckCircle2, Loader2,
   ChevronLeft, ToggleLeft, ToggleRight, AlertTriangle,
@@ -512,7 +512,7 @@ export default function TakeAttendancePage() {
       form.append("lecture_id", lec.id);
       photos.forEach(f => form.append("files", f));
 
-      const r2 = await apiFetch("/attendance/take-ai", { method: "POST", body: form });
+      const r2 = await apiFetchForm("/attendance/take-ai", form);
       clearInterval(tick);
       setProcProgress(100);
 
