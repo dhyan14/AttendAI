@@ -165,69 +165,44 @@ function AnnotatedPhoto({
 
         const color  = face.matched ? "#22d37a" : "#ff453a";
         
-        // Scale line width and corners dynamically by face size to keep them proportional
-        // and avoid thick blocks of color blocking small faces.
-        const lineW  = Math.max(1, Math.min(Math.round(bw / 35), 3));
-        const corner = Math.min(bw, bh) * 0.22;
-        const cornerLineW = lineW * 2.0;
+        // Thinner, cleaner line width proportional to face size
+        const lineW  = Math.max(1, Math.min(Math.round(bw / 60), 2));
 
-        // ── Thin full rectangle ─────────────────────────────────
+        // ── Clean thin rectangle ─────────────────────────────────
         ctx.strokeStyle = color;
         ctx.lineWidth = lineW;
-        ctx.globalAlpha = 0.75;
+        ctx.globalAlpha = 0.9;
         ctx.strokeRect(x1, y1, bw, bh);
         ctx.globalAlpha = 1.0;
 
-        // ── Bold corner brackets ────────────────────────────────
-        ctx.shadowColor = "rgba(0,0,0,0.5)";
-        ctx.shadowBlur = Math.max(2, Math.round(bw * 0.08));
-        ctx.strokeStyle = color;
-        ctx.lineWidth = cornerLineW;
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
-        ctx.beginPath();
-        // Top-Left
-        ctx.moveTo(x1, y1 + corner); ctx.lineTo(x1, y1); ctx.lineTo(x1 + corner, y1);
-        // Top-Right
-        ctx.moveTo(x2 - corner, y1); ctx.lineTo(x2, y1); ctx.lineTo(x2, y1 + corner);
-        // Bottom-Right
-        ctx.moveTo(x2, y2 - corner); ctx.lineTo(x2, y2); ctx.lineTo(x2 - corner, y2);
-        // Bottom-Left
-        ctx.moveTo(x1 + corner, y2); ctx.lineTo(x1, y2); ctx.lineTo(x1, y2 - corner);
-        ctx.stroke();
-        ctx.shadowBlur = 0;
-
-        // ── Name label (Make text font size small so it does not overlap, but readable when zoomed) ──
-        const fontSize = Math.max(7, Math.min(Math.round(bw * 0.16), 14));
+        // ── Compact Name & Confidence label ──────────────────────
+        const fontSize = Math.max(6, Math.min(Math.round(bw * 0.12), 11));
         ctx.font = `700 ${fontSize}px -apple-system, sans-serif`;
         const label = face.matched
-          ? `${face.roll_no || face.student_name}  ${Math.round(face.confidence * 100)}%`
-          : `Unknown  ${Math.round(face.confidence * 100)}%`;
+          ? `${face.roll_no || face.student_name} ${Math.round(face.confidence * 100)}%`
+          : `Unknown ${Math.round(face.confidence * 100)}%`;
         const tw = ctx.measureText(label).width;
         
-        // Scale padding and border radius with font size to keep it beautiful
-        const px = Math.max(2, Math.round(fontSize * 0.45));
-        const py = Math.max(1, Math.round(fontSize * 0.25));
+        // Compact padding and border radius
+        const px = Math.max(2, Math.round(fontSize * 0.3));
+        const py = Math.max(1, Math.round(fontSize * 0.15));
         const tagH = fontSize + py * 2;
-        const radius = Math.max(2, Math.round(fontSize * 0.35));
+        const radius = 2;
 
-        // Place above box if room, else below
-        const tagY = y1 - tagH - 4 >= 0 ? y1 - tagH - 4 : y2 + 4;
+        // Place directly on top of the border line
+        const tagY = y1 - tagH >= 0 ? y1 - tagH : y2;
         const tagX = Math.max(0, Math.min(x1, W - tw - px * 2));
 
-        // Tag background
-        ctx.shadowColor = "rgba(0,0,0,0.4)";
-        ctx.shadowBlur = Math.max(2, Math.round(fontSize * 0.25));
-        ctx.fillStyle = face.matched ? "rgba(34,211,122,0.95)" : "rgba(255,69,58,0.95)";
+        // Flat tag background (no shadow)
+        ctx.fillStyle = color;
         ctx.beginPath();
         ctx.roundRect(tagX, tagY, tw + px * 2, tagH, radius);
         ctx.fill();
-        ctx.shadowBlur = 0;
 
         // Tag text
         ctx.fillStyle = "#ffffff";
         ctx.font = `700 ${fontSize}px -apple-system, sans-serif`;
-        ctx.fillText(label, tagX + px, tagY + py + fontSize * 0.88);
+        ctx.fillText(label, tagX + px, tagY + py + fontSize * 0.85);
       }
     };
     img.src = src;
