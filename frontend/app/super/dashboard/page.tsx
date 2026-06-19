@@ -1210,12 +1210,15 @@ export default function SuperDashboard() {
       <Toast msg={toast} />
 
       {/* Header */}
-      <div style={{
-        position: "sticky", top: 0, zIndex: 100,
-        background: "rgba(8,7,15,0.97)", backdropFilter: "blur(20px)",
-        borderBottom: "1px solid var(--border)", padding: "14px 16px",
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-      }}>
+      <div 
+        className="super-dashboard-header"
+        style={{
+          position: "sticky", top: 0, zIndex: 100,
+          background: "rgba(8,7,15,0.97)", backdropFilter: "blur(20px)",
+          borderBottom: "1px solid var(--border)", padding: "14px 16px",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+        }}
+      >
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{
             width: 36, height: 36, borderRadius: 10, flexShrink: 0,
@@ -1448,6 +1451,11 @@ export default function SuperDashboard() {
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes slideDown { from { opacity:0; transform:translateX(-50%) translateY(-8px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
         @keyframes slideUp { from { opacity:0; transform:translateY(20px); } to { opacity:1; transform:translateY(0); } }
+        @media (min-width: 768px) {
+          .super-dashboard-header {
+            display: none !important;
+          }
+        }
       `}</style>
     </div>
   );
