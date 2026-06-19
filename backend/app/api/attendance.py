@@ -507,14 +507,14 @@ async def take_attendance_ai(
         async def _process_one(raw: bytes):
             """
             Fully async: build HQ preview + run tiled face detection.
-            Capped at 9 s via asyncio.wait_for.
+            Capped at 30 s (CPU is slow, don't cut off mid-detection).
             Returns (preview_b64: str, face_boxes_scaled: list[dict], annotated_original_b64: str)
             """
+            import time
             from PIL import Image as PILImage
 
             preview_b64 = ""
             annotated_original_b64 = ""
-            scale_x = scale_y = 1.0
 
             # ── Load original PIL image ──────────────────────────────────
             try:
@@ -523,41 +523,50 @@ async def take_attendance_ai(
                 print(f"[AI] Error loading original image: {e}")
                 return "", [], ""
 
-            # ── Build HQ preview for frontend (BILINEAR — faster) ────────
+            orig_w, orig_h = img_orig.width, img_orig.height
+            print(f"[AI] Image size: {orig_w}x{orig_h}")
+
+            # ── Build 960px JPEG preview for fast display ─────────────────
             try:
-                orig_w, orig_h = img_orig.width, img_orig.height
-                max_w = 960
-                if orig_w > max_w:
-                    ratio = max_w / orig_w
+                if orig_w > 960:
+                    ratio = 960 / orig_w
                     img_preview = img_orig.resize(
-                        (max_w, int(orig_h * ratio)),
-                        PILImage.BILINEAR
+                        (960, int(orig_h * ratio)), PILImage.BILINEAR
                     )
-                    scale_x = img_preview.width  / orig_w
-                    scale_y = img_preview.height / orig_h
                 else:
                     img_preview = img_orig.copy()
-                    
                 buf = _io.BytesIO()
                 img_preview.save(buf, format="JPEG", quality=82, optimize=False)
                 preview_b64 = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
             except Exception as pe:
                 print(f"[AI] Preview error: {pe}")
 
-            # ── Face detection — hard 9-second cap ───────────────────────
+            # ── Compute scale factors for mapping detections back to preview ──
+            # The bboxes from face_service come in ORIGINAL image coordinates.
+            # We need no scale when displaying the full-res annotated image directly.
+            # scale_x/y are only used for the 960px preview JSON annotations (no longer used for display).
+            scale_x = 1.0
+            scale_y = 1.0
+
+            # ── Face detection — DETECT on original bytes ─────────────────
+            # face_service internally decodes the raw bytes and upscales 2x for detection.
+            # The raw bytes are the original full-res JPEG — let the service handle resize.
             face_boxes_scaled: list[dict] = []
             face_boxes_orig: list[dict] = []
+            t0 = time.time()
             try:
+                print(f"[AI] Starting face detection on {orig_w}x{orig_h} image...")
                 probe_raw = await asyncio.wait_for(
                     face_service.get_embeddings_async(raw),
-                    timeout=9.0
+                    timeout=30.0   # CPU detection can take 15-25s for large images
                 )
+                elapsed = time.time() - t0
+                print(f"[AI] Detection done: {len(probe_raw)} faces in {elapsed:.1f}s")
+
                 for (bbox_orig, probe_emb) in probe_raw:
-                    ox1, oy1, ox2, oy2 = bbox_orig
-                    scaled_bbox = [
-                        round(ox1 * scale_x, 1), round(oy1 * scale_y, 1),
-                        round(ox2 * scale_x, 1), round(oy2 * scale_y, 1),
-                    ]
+                    ox1, oy1, ox2, oy2 = [float(v) for v in bbox_orig]
+
+                    # Match against stored embeddings
                     probe_vec = np.array(probe_emb, dtype=np.float32)
                     probe_vec /= (np.linalg.norm(probe_vec) + 1e-8)
                     sims = stored_vecs_arr @ probe_vec
@@ -579,15 +588,6 @@ async def take_attendance_ai(
                         roll_no = None
                         matched = False
 
-                    face_boxes_scaled.append({
-                        "bbox": scaled_bbox,
-                        "matched": matched,
-                        "student_id": sid,
-                        "student_name": student_name,
-                        "roll_no": roll_no,
-                        "confidence": round(best_sim, 3),
-                    })
-
                     face_boxes_orig.append({
                         "bbox": [ox1, oy1, ox2, oy2],
                         "matched": matched,
@@ -596,21 +596,41 @@ async def take_attendance_ai(
                         "roll_no": roll_no,
                         "confidence": round(best_sim, 3),
                     })
-            except asyncio.TimeoutError:
-                print("[AI] Detection timed out (9s) — returning partial results for this image")
-            except Exception as e:
-                print(f"[AI] Recognition error: {e}")
+                    # Scaled bbox for JSON annotations (mapped to 960px preview)
+                    face_boxes_scaled.append({
+                        "bbox": [
+                            round(ox1 * scale_x, 1), round(oy1 * scale_y, 1),
+                            round(ox2 * scale_x, 1), round(oy2 * scale_y, 1),
+                        ],
+                        "matched": matched,
+                        "student_id": sid,
+                        "student_name": student_name,
+                        "roll_no": roll_no,
+                        "confidence": round(best_sim, 3),
+                    })
 
-            # ── Annotate the ORIGINAL quality image (PNG = lossless, no compression) ───
-            try:
-                img_annotated = draw_annotations_on_image(img_orig, face_boxes_orig)
-                buf_orig = _io.BytesIO()
-                img_annotated.save(buf_orig, format="PNG", optimize=False)  # lossless, zero quality loss
-                annotated_original_b64 = "data:image/png;base64," + base64.b64encode(buf_orig.getvalue()).decode()
-            except Exception as ae:
-                print(f"[AI] Original annotation error: {ae}")
-                # fallback to raw original base64 (JPEG as-is, unchanged bytes)
-                annotated_original_b64 = "data:image/jpeg;base64," + base64.b64encode(raw).decode()
+            except asyncio.TimeoutError:
+                elapsed = time.time() - t0
+                print(f"[AI] ⚠ Detection timed out after {elapsed:.1f}s — returning 0 faces for this image")
+            except Exception as e:
+                import traceback
+                print(f"[AI] Recognition error: {e}\n{traceback.format_exc()}")
+
+            # ── Annotate original-quality image (PNG = lossless) ─────────
+            # Run in executor because PNG encoding is CPU-heavy (could take 5-10s for large images)
+            def _encode_annotated():
+                try:
+                    img_annotated = draw_annotations_on_image(img_orig, face_boxes_orig)
+                    buf_out = _io.BytesIO()
+                    # Use JPEG quality=98 instead of PNG to avoid huge files (PNG for 12MP = 15-40 MB)
+                    img_annotated.save(buf_out, format="JPEG", quality=98, subsampling=0)
+                    return "data:image/jpeg;base64," + base64.b64encode(buf_out.getvalue()).decode()
+                except Exception as ae:
+                    print(f"[AI] Annotation encode error: {ae}")
+                    return "data:image/jpeg;base64," + base64.b64encode(raw).decode()
+
+            loop = asyncio.get_running_loop()
+            annotated_original_b64 = await loop.run_in_executor(face_service._executor, _encode_annotated)
 
             return preview_b64, face_boxes_scaled, annotated_original_b64
 
@@ -641,12 +661,13 @@ async def take_attendance_ai(
         for raw in raw_images:
             total_size += len(raw)
             try:
-                # Store original image losslessly as PNG (no re-encode quality loss)
                 from PIL import Image as PILImage
                 img_pil = PILImage.open(_io.BytesIO(raw)).convert("RGB")
-                buf_png = _io.BytesIO()
-                img_pil.save(buf_png, format="PNG", optimize=False)
-                b64_orig = "data:image/png;base64," + base64.b64encode(buf_png.getvalue()).decode()
+
+                # Store original at JPEG q98 (not PNG — PNG for 12MP = 15-40MB base64)
+                buf_hq = _io.BytesIO()
+                img_pil.save(buf_hq, format="JPEG", quality=98, subsampling=0)
+                b64_orig = "data:image/jpeg;base64," + base64.b64encode(buf_hq.getvalue()).decode()
                 annotated_previews.append(b64_orig)
 
                 # Resized preview for frontend

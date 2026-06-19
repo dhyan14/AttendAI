@@ -43,7 +43,7 @@ class FaceService:
         self.load_error: Optional[str] = None
         self._loading    = False
         # Use more workers to process photos in parallel
-        self._executor   = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+        self._executor   = concurrent.futures.ThreadPoolExecutor(max_workers=6)
 
     # ── Model Loading ─────────────────────────────────────────────────────────
 
@@ -167,20 +167,30 @@ class FaceService:
         Speed-optimized tiled detection pipeline for classroom photos.
 
         Total inference passes = 3 (1 full-image + 1×2 tiles):
-          - Pass 1: Full image at 1.5× upscale  → catches medium-distance faces
+          - Pre-resize to ≤1920px wide (cap before upscale — avoids feeding 12MP into model)
+          - Pass 1: Full image at UPSCALE_FACTOR upscale → catches medium-distance faces
           - Pass 2: Left half of upscaled image  → catches left-side far faces
           - Pass 3: Right half of upscaled image → catches right-side far faces
           - NMS to deduplicate overlapping detections
-
-        Previous config: 7 passes (1 full + 2×3 tiles) at 640px → ~3× slower
-        Current config:  3 passes (1 full + 1×2 tiles) at 480px → fast enough for ≤10s
         """
+        import cv2
         h_orig, w_orig = img.shape[:2]
         all_detections: list = []
 
-        # ── Pass 1: Full image at 1.5× upscale ───────────────────────────
+        # ── Pre-resize: cap to 1920px wide BEFORE upscale ─────────────────
+        # Without this cap, a 4032×3024 photo gets upscaled to 8064×6048 → very slow
+        MAX_INPUT_WIDTH = 1920
+        if w_orig > MAX_INPUT_WIDTH:
+            cap_scale = MAX_INPUT_WIDTH / w_orig
+            cap_h = int(h_orig * cap_scale)
+            img = cv2.resize(img, (MAX_INPUT_WIDTH, cap_h), interpolation=cv2.INTER_LINEAR)
+            h_orig, w_orig = img.shape[:2]
+            print(f"[FaceService] Pre-resized to {w_orig}x{h_orig} for detection")
+
+        # ── Pass 1: Full image at UPSCALE_FACTOR upscale ─────────────────
         img_up, scale = self._upscale(img, UPSCALE_FACTOR)
         h_up, w_up = img_up.shape[:2]
+        print(f"[FaceService] Upscaled to {w_up}x{h_up} (scale={scale:.2f})")
 
         dets_full = self._detect_on_img(img_up)
         for det in dets_full:
