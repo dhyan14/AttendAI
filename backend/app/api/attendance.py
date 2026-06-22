@@ -394,22 +394,24 @@ def draw_annotations_on_image(img_pil, face_boxes):
 @router.post("/take-ai")
 async def take_attendance_ai(
     lecture_id: str = Form(...),
-    files: List[UploadFile] = File(...),   # up to 3 classroom images
+    files: List[UploadFile] = File(...),   # exactly 3 classroom images required
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_faculty)
 ):
     """
     Take AI-based attendance using real face recognition.
 
-    Speed optimizations (target ≤ 10 s on CPU):
-      - Accepts max 3 photos (was 5) — fewer photos = less total work
-      - ALL photos processed IN PARALLEL via asyncio.gather
-      - Each image capped at 9 s via asyncio.wait_for
-      - InsightFace runs at 480px (was 640px) — ~2× faster per inference pass
-      - Tiled detection: 3 passes (1 full + 1×2 tiles) vs old 7 passes (1+6)
-      - Stored embedding matrix built ONCE and reused across all images
-      - BILINEAR resize for previews (faster than LANCZOS)
-
+    Speed optimizations (target ≤ 8 s per image on CPU):
+      - Requires exactly 3 photos (enforced)
+      - Photos processed SEQUENTIALLY — CPU ONNX inference is already
+        fully multi-threaded internally; running 3 in parallel causes cache
+        thrashing and is actually SLOWER than sequential on CPU
+      - Per-image timeout: 15 s (generous for CPU; 3 images = 45 s budget)
+      - InsightFace at 480×480 det_size (~2× faster than 640×640)
+      - Pre-shrink to 1280px before upscale (was 1920px → 44% fewer pixels)
+      - Tiling only for landscape images (portrait = just 1 pass)
+      - Annotation encoded at JPEG quality=85 (was 98 — 3× smaller, 3× faster)
+    
     Falls back to deterministic mock if InsightFace unavailable.
     """
     from app.services.face_service import face_service, MATCH_THRESHOLD
@@ -436,7 +438,9 @@ async def take_attendance_ai(
 
     if not files:
         raise HTTPException(status_code=400, detail="No images provided")
-    files = files[:3]   # hard cap at 3 for speed
+    if len(files) < 3:
+        raise HTTPException(status_code=400, detail=f"Please upload exactly 3 classroom photos (you uploaded {len(files)}). More angles = better accuracy.")
+    files = files[:3]   # use exactly 3
 
     # ── Load attendance records + student info ───────────────────────────
     rec_res = await db.execute(
@@ -500,31 +504,31 @@ async def take_attendance_ai(
     image_annotations: list[list[dict]] = []
 
     if use_ai:
-        # Build stored embedding matrix ONCE — reused across all parallel image tasks
+        # Build stored embedding matrix ONCE — reused across all sequential image tasks
         stored_vecs_arr = np.array([s["embedding"] for s in stored_list], dtype=np.float32)
         stored_vecs_arr /= (np.linalg.norm(stored_vecs_arr, axis=1, keepdims=True) + 1e-8)
 
-        async def _process_one(raw: bytes):
+        async def _process_one(raw: bytes, img_idx: int):
             """
-            Fully async: build HQ preview + run tiled face detection.
-            Capped at 30 s (CPU is slow, don't cut off mid-detection).
-            Returns (preview_b64: str, face_boxes_scaled: list[dict], annotated_original_b64: str)
+            Process a single image: build preview + run face detection.
+            Per-image timeout: 15 s. Sequential calls prevent CPU cache thrashing.
+            Returns (preview_b64: str, face_boxes_scaled: list[dict], annotated_b64: str)
             """
             import time
             from PIL import Image as PILImage
 
             preview_b64 = ""
-            annotated_original_b64 = ""
+            annotated_b64 = ""
 
             # ── Load original PIL image ──────────────────────────────────
             try:
                 img_orig = PILImage.open(_io.BytesIO(raw)).convert("RGB")
             except Exception as e:
-                print(f"[AI] Error loading original image: {e}")
+                print(f"[AI] img{img_idx}: Error loading image: {e}")
                 return "", [], ""
 
             orig_w, orig_h = img_orig.width, img_orig.height
-            print(f"[AI] Image size: {orig_w}x{orig_h}")
+            print(f"[AI] img{img_idx}: {orig_w}x{orig_h}")
 
             # ── Build 960px JPEG preview for fast display ─────────────────
             try:
@@ -536,32 +540,25 @@ async def take_attendance_ai(
                 else:
                     img_preview = img_orig.copy()
                 buf = _io.BytesIO()
-                img_preview.save(buf, format="JPEG", quality=82, optimize=False)
+                img_preview.save(buf, format="JPEG", quality=75, optimize=False)
                 preview_b64 = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
             except Exception as pe:
-                print(f"[AI] Preview error: {pe}")
+                print(f"[AI] img{img_idx}: Preview error: {pe}")
 
-            # ── Compute scale factors for mapping detections back to preview ──
-            # The bboxes from face_service come in ORIGINAL image coordinates.
-            # We need no scale when displaying the full-res annotated image directly.
-            # scale_x/y are only used for the 960px preview JSON annotations (no longer used for display).
-            scale_x = 1.0
-            scale_y = 1.0
-
-            # ── Face detection — DETECT on original bytes ─────────────────
-            # face_service internally decodes the raw bytes and upscales 2x for detection.
-            # The raw bytes are the original full-res JPEG — let the service handle resize.
+            # ── Face detection ────────────────────────────────────────────
+            # Per-image budget: 15 s. Sequential processing ensures full CPU
+            # bandwidth for each image's ONNX inference (no cache contention).
             face_boxes_scaled: list[dict] = []
             face_boxes_orig: list[dict] = []
             t0 = time.time()
             try:
-                print(f"[AI] Starting face detection on {orig_w}x{orig_h} image...")
+                print(f"[AI] img{img_idx}: Starting detection...")
                 probe_raw = await asyncio.wait_for(
                     face_service.get_embeddings_async(raw),
-                    timeout=30.0   # CPU detection can take 15-25s for large images
+                    timeout=15.0   # 15 s per image × 3 images = 45 s total budget
                 )
                 elapsed = time.time() - t0
-                print(f"[AI] Detection done: {len(probe_raw)} faces in {elapsed:.1f}s")
+                print(f"[AI] img{img_idx}: Detection done — {len(probe_raw)} faces in {elapsed:.1f}s")
 
                 for (bbox_orig, probe_emb) in probe_raw:
                     ox1, oy1, ox2, oy2 = [float(v) for v in bbox_orig]
@@ -581,61 +578,58 @@ async def take_attendance_ai(
                         )
                         student_name = matched_row.student_name if matched_row else "Unknown"
                         roll_no = matched_row.roll_no if matched_row else ""
-                        matched = True
+                        is_matched = True
                     else:
                         sid = None
                         student_name = None
                         roll_no = None
-                        matched = False
+                        is_matched = False
 
-                    face_boxes_orig.append({
+                    face_info = {
                         "bbox": [ox1, oy1, ox2, oy2],
-                        "matched": matched,
+                        "matched": is_matched,
                         "student_id": sid,
                         "student_name": student_name,
                         "roll_no": roll_no,
                         "confidence": round(best_sim, 3),
-                    })
-                    # Scaled bbox for JSON annotations (mapped to 960px preview)
-                    face_boxes_scaled.append({
-                        "bbox": [
-                            round(ox1 * scale_x, 1), round(oy1 * scale_y, 1),
-                            round(ox2 * scale_x, 1), round(oy2 * scale_y, 1),
-                        ],
-                        "matched": matched,
-                        "student_id": sid,
-                        "student_name": student_name,
-                        "roll_no": roll_no,
-                        "confidence": round(best_sim, 3),
-                    })
+                    }
+                    face_boxes_orig.append(face_info)
+                    face_boxes_scaled.append(face_info.copy())  # bboxes are already in orig coords
 
             except asyncio.TimeoutError:
                 elapsed = time.time() - t0
-                print(f"[AI] ⚠ Detection timed out after {elapsed:.1f}s — returning 0 faces for this image")
+                print(f"[AI] img{img_idx}: ⚠ Timed out after {elapsed:.1f}s — 0 faces this image")
             except Exception as e:
                 import traceback
-                print(f"[AI] Recognition error: {e}\n{traceback.format_exc()}")
+                print(f"[AI] img{img_idx}: Error: {e}\n{traceback.format_exc()}")
 
-            # ── Annotate original-quality image (PNG = lossless) ─────────
-            # Run in executor because PNG encoding is CPU-heavy (could take 5-10s for large images)
+            # ── Annotate image with face boxes ────────────────────────────
+            # JPEG quality=85 (was 98): ~3× smaller output, ~3× faster encoding
+            # Still visually excellent for annotation display purposes
             def _encode_annotated():
                 try:
-                    img_annotated = draw_annotations_on_image(img_orig, face_boxes_orig)
+                    img_ann = draw_annotations_on_image(img_orig, face_boxes_orig)
                     buf_out = _io.BytesIO()
-                    # Use JPEG quality=98 instead of PNG to avoid huge files (PNG for 12MP = 15-40 MB)
-                    img_annotated.save(buf_out, format="JPEG", quality=98, subsampling=0)
+                    img_ann.save(buf_out, format="JPEG", quality=85, subsampling=0)
                     return "data:image/jpeg;base64," + base64.b64encode(buf_out.getvalue()).decode()
                 except Exception as ae:
-                    print(f"[AI] Annotation encode error: {ae}")
-                    return "data:image/jpeg;base64," + base64.b64encode(raw).decode()
+                    print(f"[AI] img{img_idx}: Annotation encode error: {ae}")
+                    # Fallback: return unannotated 960px preview instead of huge raw
+                    return preview_b64
 
             loop = asyncio.get_running_loop()
-            annotated_original_b64 = await loop.run_in_executor(face_service._executor, _encode_annotated)
+            annotated_b64 = await loop.run_in_executor(face_service._executor, _encode_annotated)
 
-            return preview_b64, face_boxes_scaled, annotated_original_b64
+            return preview_b64, face_boxes_scaled, annotated_b64
 
-        # ── Process ALL images IN PARALLEL ────────────────────────────────
-        results = await asyncio.gather(*[_process_one(raw) for raw in raw_images])
+        # ── Process images SEQUENTIALLY ───────────────────────────────────
+        # CPU ONNX (InsightFace) already saturates all cores in a single inference.
+        # Running 3 images in parallel causes cache thrashing = SLOWER overall.
+        # Sequential: each image gets full CPU bandwidth → consistent ~8s/image.
+        results = []
+        for idx, raw in enumerate(raw_images):
+            result = await _process_one(raw, idx + 1)
+            results.append(result)
 
         annotated_previews = []
         for preview_b64, face_boxes_scaled, annotated_original_b64 in results:

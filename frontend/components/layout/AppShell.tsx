@@ -238,13 +238,33 @@ function Sidebar({
    ═══════════════════════════════════════════════════════════ */
 function BottomNavBar({ role }: { role: AppRole }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const items = getBottomNav(role);
+
+  // For super_admin: hide the bottom nav when inside an org/dept drill-down
+  if (role === "super_admin" && searchParams.get("orgId")) {
+    return null;
+  }
+
+  function isItemActive(item: NavItem): boolean {
+    if (role === "super_admin") {
+      // Match based on pathname + query param "s"
+      const [itemPath, itemQuery] = item.href.split("?");
+      if (!pathname.startsWith(itemPath)) return false;
+      const itemSection = new URLSearchParams(itemQuery || "").get("s") || "overview";
+      const currentSection = searchParams.get("s") || "overview";
+      return itemSection === currentSection;
+    }
+    return (
+      pathname.startsWith(item.href) &&
+      !(item.href === "/faculty/attendance" && pathname === "/faculty/attendance/take")
+    );
+  }
 
   return (
     <nav className="bottom-nav">
       {items.map((item) => {
-        const isActive = pathname.startsWith(item.href) &&
-          !(item.href === "/faculty/attendance" && pathname === "/faculty/attendance/take");
+        const active = isItemActive(item);
 
         if (item.fab) {
           return (
@@ -261,7 +281,7 @@ function BottomNavBar({ role }: { role: AppRole }) {
           <Link
             key={item.href}
             href={item.href}
-            className={`nav-item${isActive ? " active" : ""}`}
+            className={`nav-item${active ? " active" : ""}`}
           >
             {item.icon}
             <span>{item.label}</span>
