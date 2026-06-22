@@ -666,12 +666,13 @@ async def take_attendance_ai(
 
         annotated_previews = []
         for preview_b64, face_boxes_scaled, annotated_original_b64 in results:
-            if preview_b64:
-                image_previews.append(preview_b64)
+            # ALWAYS append to keep lists index-aligned with raw_images.
+            # If annotation failed (empty string), fall back to the plain preview
+            # so slot i always has an image — even if unannotated.
+            image_previews.append(preview_b64)
             image_annotations.append(face_boxes_scaled)
-            if annotated_original_b64:
-                annotated_previews.append(annotated_original_b64)
-            
+            annotated_previews.append(annotated_original_b64 or preview_b64)
+
             # Accumulate — keep highest confidence per student across all images
             for fb in face_boxes_scaled:
                 if fb["matched"] and fb["student_id"]:
@@ -680,6 +681,7 @@ async def take_attendance_ai(
                     if sid not in ai_confidences or conf > ai_confidences[sid]:
                         ai_confidences[sid] = conf
                         detected_student_ids.add(sid)
+
 
     else:
         # Mock fallback — previews only, no AI

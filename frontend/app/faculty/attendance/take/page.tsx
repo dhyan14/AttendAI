@@ -798,13 +798,16 @@ export default function TakeAttendancePage() {
         return;
       }
 
-      // Use annotated_image_urls if provided (full-quality baked annotations)
-      // Otherwise fall back to image_previews
+      // Merge per-slot: for each image index, prefer the annotated version from
+      // backend. Fall back to the plain preview if the annotated one is missing.
+      // This prevents index misalignment when some slots fail annotation.
+      const mergedPreviews = Array.from({ length: result.image_previews.length }, (_, i) =>
+        (result.annotated_image_urls?.[i]) || result.image_previews[i]
+      );
+
       const displayResult: AIResult = {
         ...result,
-        image_previews: result.annotated_image_urls && result.annotated_image_urls.length > 0
-          ? result.annotated_image_urls
-          : result.image_previews,
+        image_previews: mergedPreviews,
       };
 
       setAiResult(displayResult);
