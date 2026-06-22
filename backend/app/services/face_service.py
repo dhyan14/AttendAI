@@ -3,44 +3,32 @@ AttendAI Face Recognition Service
 ===================================
 Optimized for CLASSROOM PHOTOS — students at 2–15 metres from camera.
 
-## Architecture: Model Pool (thread-safe, concurrent-request-safe)
+## Thread Safety (Concurrent Request Fix)
 
-Problem solved: InsightFace's FaceAnalysis is NOT thread-safe.
-Calling self.model.get(img) from multiple threads simultaneously
-corrupts internal buffers → wrong/empty results for requests 2 & 3.
+Problem: InsightFace's model.get(img) is NOT thread-safe.
+  When 3 teachers submit attendance simultaneously, concurrent calls
+  to model.get() corrupt each other's internal buffers → wrong results.
 
-Solution: MODEL POOL
-  - POOL_SIZE model instances are created at startup
-  - Stored in a thread-safe queue.Queue
-  - Each image detection grabs ONE model instance, uses it, returns it
-  - Multiple concurrent requests each get their own model → truly parallel
-  - If all models are busy, extra requests block until one is free
+Fix: threading.Lock around model.get() — ONE inference at a time.
+  • Simple, zero memory overhead (vs. 3× model pool = OOM risk)
+  • All concurrent requests succeed — they just queue through the lock
+  • Each inference: ~2s → 3 teachers: ~6-8s each, all get correct results
 
-With POOL_SIZE=3:
-  - Teacher A, B, C all submit attendance simultaneously
-  - Each gets their own model instance immediately
-  - All 3 complete in ~6-8s (parallel!) instead of ~18s (sequential)
-  - A 4th teacher waits ~2s for a model to free up → graceful queuing
-
-## Speed (per request, 1024px frontend pre-resize):
+## Speed per request (1024px frontend pre-resize):
   Step 1 — Decode 1024px JPEG     : ~30 ms
   Step 2 — Mild upscale to 1366px : ~20 ms  (bilinear)
-  Step 3 — Single ONNX pass 480px : ~1.5–2 s on CPU (exclusive model)
+  Step 3 — Single ONNX pass 480px : ~1.5–2 s (serialized through lock)
   Step 4 — NMS                    : <1 ms
-  Total                           : ~2–2.5 s per image
-
-## Memory per model instance (buffalo_s):
-  SCRFD detection  : ~25 MB
-  ArcFace recog.   : ~87 MB
-  Total            : ~112 MB × 3 instances = ~336 MB
+  Per image                       : ~2–2.5 s
+  3 images per request            : ~6-7 s (images processed in parallel,
+                                    inference serialized through lock)
 """
 
 from __future__ import annotations
-import queue as _queue
+import threading
 import numpy as np
 import asyncio
 import concurrent.futures
-import threading
 from typing import Optional
 from app.config import settings
 
@@ -50,42 +38,46 @@ DET_SIZE          = (480, 480)   # SCRFD detector input size — fastest viable
 DET_SCORE_THRESH  = 0.35         # minimum detection confidence
 UPSCALE_FACTOR    = 1.33         # mild upscale: 1024px → 1362px
 MAX_DET_WIDTH     = 1400         # hard cap after upscale
-POOL_SIZE         = 3            # number of model instances (= max parallel inferences)
 
 
 class FaceService:
     """
-    InsightFace ArcFace wrapper with a model pool for concurrent-request safety.
+    InsightFace ArcFace wrapper — single model instance, thread-safe via lock.
 
-    Key guarantee: each call to self.model.get(img) always uses a
-    dedicated model instance — no shared state, no corruption under
-    concurrent load from multiple HTTP requests.
+    All public inference calls are protected by self._infer_lock so that
+    concurrent HTTP requests never call model.get() simultaneously.
+    Workers for I/O (decode, encode) run freely in parallel.
     """
 
     def __init__(self):
-        self._pool: _queue.Queue = _queue.Queue()   # pool of FaceAnalysis instances
+        self.model        = None
         self.initialized  = False
         self.load_error: Optional[str] = None
         self._loading     = False
-        self._init_lock   = threading.Lock()
-        # Workers: POOL_SIZE for inference + 2 extras for encode/decode I/O
+        # Serializes all model.get() calls — the ONLY safe way to share one instance
+        self._infer_lock  = threading.Lock()
+        # Workers: inference (1 active at a time via lock) + I/O tasks (decode/encode)
         self._executor    = concurrent.futures.ThreadPoolExecutor(
-            max_workers=POOL_SIZE + 2,
+            max_workers=4,
             thread_name_prefix="face_worker",
         )
 
     # ── Model Loading ─────────────────────────────────────────────────────────
 
-    def _create_model_instance(self) -> object:
-        """
-        Create ONE InsightFace FaceAnalysis instance.
-        Called POOL_SIZE times — each instance is independent.
-        """
+    def _load_model(self):
+        """Blocking — runs once in thread pool at startup."""
         import os
         from insightface.app import FaceAnalysis
 
         MODEL_ROOT = "/app/insightface_models"
         os.environ["INSIGHTFACE_HOME"] = MODEL_ROOT
+
+        print(f"[FaceService] Model root: {MODEL_ROOT}")
+        models_dir = os.path.join(MODEL_ROOT, "models", "buffalo_s")
+        if os.path.isdir(models_dir):
+            print(f"[FaceService] buffalo_s files: {os.listdir(models_dir)}")
+        else:
+            print(f"[FaceService] ⚠ buffalo_s dir not found at {models_dir}")
 
         model = FaceAnalysis(
             name="buffalo_s",
@@ -94,37 +86,20 @@ class FaceService:
             root=MODEL_ROOT,
         )
         model.prepare(ctx_id=-1, det_size=DET_SIZE, det_thresh=DET_SCORE_THRESH)
+        print(f"[FaceService] Ready — det_size={DET_SIZE}, det_thresh={DET_SCORE_THRESH}")
         return model
 
-    def _load_pool(self):
-        """
-        Blocking: load POOL_SIZE model instances and fill the pool queue.
-        Runs once in thread pool at startup.
-        """
-        import os
-        MODEL_ROOT = "/app/insightface_models"
-        models_dir = os.path.join(MODEL_ROOT, "models", "buffalo_s")
-        print(f"[FaceService] Loading {POOL_SIZE} model instances…")
-        if os.path.isdir(models_dir):
-            print(f"[FaceService] buffalo_s files: {os.listdir(models_dir)}")
-
-        for i in range(POOL_SIZE):
-            m = self._create_model_instance()
-            self._pool.put(m)
-            print(f"[FaceService] ✓ Model instance {i+1}/{POOL_SIZE} ready")
-
     async def initialize(self):
-        with self._init_lock:
-            if self.initialized or self._loading:
-                return
-            self._loading = True
-
+        if self.initialized or self._loading:
+            return
+        self._loading = True
         try:
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(self._executor, self._load_pool)
+            print("[FaceService] Loading InsightFace buffalo_s…")
+            self.model       = await loop.run_in_executor(self._executor, self._load_model)
             self.initialized = True
             self.load_error  = None
-            print(f"✅ FaceService: {POOL_SIZE} model instances ready (concurrent-safe)")
+            print("✅ FaceService ready — thread-safe single model with inference lock")
         except Exception as e:
             import traceback
             self.load_error  = f"{type(e).__name__}: {e}"
@@ -145,11 +120,11 @@ class FaceService:
 
     def _upscale(self, img, factor: float, max_w: int):
         import cv2
-        h, w   = img.shape[:2]
-        new_w  = min(int(w * factor), max_w)
+        h, w  = img.shape[:2]
+        new_w = min(int(w * factor), max_w)
         if new_w <= w:
             return img, 1.0
-        new_h  = int(h * (new_w / w))
+        new_h = int(h * (new_w / w))
         return cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR), new_w / w
 
     def _iou(self, a, b) -> float:
@@ -168,16 +143,17 @@ class FaceService:
                 kept.append(det)
         return kept
 
-    # ── Core Detection (model passed explicitly — never shared between calls) ─
+    # ── Core Detection ────────────────────────────────────────────────────────
 
-    def _detect_on_img(self, model, img) -> list:
+    def _detect_on_img(self, img) -> list:
         """
-        Run InsightFace on one image using the GIVEN model instance.
-        The model instance is exclusively owned by the calling thread
-        (acquired from pool, not returned until this call is complete).
-        Thread-safe by construction: no shared model state.
+        Run InsightFace inference on one image.
+        Protected by self._infer_lock — only ONE thread runs this at a time
+        across ALL concurrent HTTP requests. Prevents model state corruption.
         """
-        faces = model.get(img)
+        with self._infer_lock:        # ← serializes concurrent model calls
+            faces = self.model.get(img)
+
         return [
             {
                 "bbox":      face.bbox.tolist(),
@@ -188,10 +164,9 @@ class FaceService:
             if face.det_score >= DET_SCORE_THRESH and face.normed_embedding is not None
         ]
 
-    def _single_pass_detect(self, model, img) -> list:
+    def _single_pass_detect(self, img) -> list:
         """
-        Detect faces in one 1024px image using a mild upscale.
-        Model instance is passed explicitly (pool-managed).
+        Detect faces in one 1024px image using a mild upscale + single ONNX pass.
         """
         h_orig, w_orig = img.shape[:2]
 
@@ -199,9 +174,9 @@ class FaceService:
         h_up, w_up = img_up.shape[:2]
         print(f"[FaceService] {w_orig}x{h_orig} → {w_up}x{h_up} (scale={up_scale:.2f})")
 
-        dets = self._detect_on_img(model, img_up)
+        dets = self._detect_on_img(img_up)
 
-        # Remap upscaled coords → original coords
+        # Remap upscaled coords → original image coords
         for det in dets:
             b = det["bbox"]
             det["bbox"] = [b[0]/up_scale, b[1]/up_scale, b[2]/up_scale, b[3]/up_scale]
@@ -212,21 +187,13 @@ class FaceService:
 
     def _process_single_image(self, image_bytes: bytes) -> list:
         """
-        Decode + detect one image.
-        Acquires a model from the pool → exclusive use → releases on completion.
-        Called via run_in_executor (non-blocking for the event loop).
-
-        Concurrency guarantee: multiple threads may call this simultaneously.
-        Each gets its own model instance from the pool.
-        Pool blocks (thread sleeps) if all instances are busy — no data corruption.
+        Decode + detect one image. Runs in thread pool executor.
+        The inference lock ensures thread safety for concurrent callers.
+        Returns list of (bbox, embedding) tuples.
         """
-        model = self._pool.get()     # ← blocks until a model is available
-        try:
-            img   = self._decode_image(image_bytes)
-            faces = self._single_pass_detect(model, img)
-            return [(f["bbox"], f["embedding"]) for f in faces]
-        finally:
-            self._pool.put(model)    # ← always released, even on exception
+        img   = self._decode_image(image_bytes)
+        faces = self._single_pass_detect(img)
+        return [(f["bbox"], f["embedding"]) for f in faces]
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -236,7 +203,7 @@ class FaceService:
         return self._process_single_image(image_bytes)
 
     async def get_embeddings_async(self, image_bytes: bytes) -> list:
-        """Async: runs detection in executor, event loop stays free."""
+        """Async: detection in executor, event loop stays free."""
         if not self.initialized:
             raise RuntimeError("Face service not initialized")
         loop = asyncio.get_running_loop()
@@ -245,19 +212,15 @@ class FaceService:
         )
 
     def get_embedding_single(self, image_bytes: bytes) -> Optional[list]:
-        """Enrollment photo → single best face embedding (portrait, one face)."""
+        """Enrollment portrait → single best face embedding."""
         if not self.initialized:
             raise RuntimeError("Face service not initialized")
-        model = self._pool.get()
-        try:
-            img    = self._decode_image(image_bytes)
-            img_up, _ = self._upscale(img, 1.5, 1920)
-            faces  = self._detect_on_img(model, img_up)
-            if not faces:
-                return None
-            return max(faces, key=lambda f: f["det_score"])["embedding"]
-        finally:
-            self._pool.put(model)
+        img    = self._decode_image(image_bytes)
+        img_up, _ = self._upscale(img, 1.5, 1920)
+        faces  = self._detect_on_img(img_up)
+        if not faces:
+            return None
+        return max(faces, key=lambda f: f["det_score"])["embedding"]
 
     def match_faces(
         self,
@@ -266,8 +229,8 @@ class FaceService:
         threshold: float = MATCH_THRESHOLD,
     ) -> list:
         """
-        Match probe embeddings against stored student embeddings.
-        Batched cosine similarity via numpy — no model needed, no pool needed.
+        Batched cosine similarity match — no model needed, no lock needed.
+        Pure numpy, fully concurrent-safe.
         """
         if not probe_embeddings or not stored_embeddings:
             return []
