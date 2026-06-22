@@ -158,47 +158,81 @@ function AnnotatedPhoto({
       const W = img.naturalWidth;
       const H = img.naturalHeight;
 
+      // Track placed label rects to prevent overlap
+      const occupiedRects: { x: number; y: number; w: number; h: number }[] = [];
+
+      const overlaps = (ax: number, ay: number, aw: number, ah: number) =>
+        occupiedRects.some(r =>
+          ax < r.x + r.w && ax + aw > r.x &&
+          ay < r.y + r.h && ay + ah > r.y
+        );
+
       for (const face of annotations) {
         const [x1, y1, x2, y2] = face.bbox;
         const bw = x2 - x1;
         const bh = y2 - y1;
         if (bw <= 0 || bh <= 0) continue;
 
-        const color  = face.matched ? "#22d37a" : "#ff453a";
-        
-        // Thinner, cleaner line width proportional to face size
-        const lineW  = Math.max(1, Math.min(Math.round(bw / 60), 2));
+        const color = face.matched ? "#22d37a" : "#ff453a";
+        const lineW = Math.max(1, Math.min(Math.round(bw / 80), 2));
 
-        // ── Clean thin rectangle ─────────────────────────────────
+        // ── Border rectangle ──────────────────────────────────────
         ctx.strokeStyle = color;
         ctx.lineWidth = lineW;
-        ctx.globalAlpha = 0.9;
+        ctx.globalAlpha = 0.85;
         ctx.strokeRect(x1, y1, bw, bh);
         ctx.globalAlpha = 1.0;
 
-        // ── Compact Name & Confidence label ──────────────────────
-        const fontSize = Math.max(6, Math.min(Math.round(bw * 0.12), 11));
-        ctx.font = `700 ${fontSize}px -apple-system, sans-serif`;
+        // ── Compact label ─────────────────────────────────────────
+        // Font: proportional to face width, hard-capped at 8px so it stays tiny
+        const fontSize = Math.max(5, Math.min(Math.round(bw * 0.08), 8));
+        ctx.font = `700 ${fontSize}px -apple-system, ui-sans-serif, sans-serif`;
+
+        // Short text: matched → roll+% only, unknown → single "?" character
         const label = face.matched
-          ? `${face.roll_no || face.student_name} ${Math.round(face.confidence * 100)}%`
-          : `Unknown ${Math.round(face.confidence * 100)}%`;
-        const tw = ctx.measureText(label).width;
-        
-        // Compact padding and border radius
-        const px = Math.max(2, Math.round(fontSize * 0.3));
-        const py = Math.max(1, Math.round(fontSize * 0.15));
+          ? `${(face.roll_no || face.student_name || "?").slice(0, 8)}·${Math.round(face.confidence * 100)}%`
+          : `?`;
+
+        const tw  = ctx.measureText(label).width;
+        const px  = 2;                   // fixed 2px horizontal padding
+        const py  = 1;                   // fixed 1px vertical padding
+        const tagW = tw + px * 2;
         const tagH = fontSize + py * 2;
-        const radius = 2;
 
-        // Place directly on top of the border line
-        const tagY = y1 - tagH >= 0 ? y1 - tagH : y2;
-        const tagX = Math.max(0, Math.min(x1, W - tw - px * 2));
+        // ── Find non-overlapping Y position ───────────────────────
+        // Prefer above the box; if that overlaps, try inside-top, then shift down
+        let tagX = Math.max(0, Math.min(x1, W - tagW));
+        let tagY = y1 - tagH; // default: above top edge
 
-        // Flat tag background (no shadow)
+        // If above is off-screen, go inside the box top
+        if (tagY < 0) tagY = y1 + lineW;
+
+        // Nudge down until no overlap (max 3 nudges to avoid infinite loop)
+        let attempts = 0;
+        while (overlaps(tagX, tagY, tagW, tagH) && attempts < 4) {
+          tagY += tagH + 1;
+          attempts++;
+        }
+        // If still overlapping, try placing below the face box
+        if (overlaps(tagX, tagY, tagW, tagH)) {
+          tagY = y2 + lineW;
+          if (tagY + tagH > H) tagY = Math.max(0, y1 - tagH);
+        }
+
+        // Register this label rect
+        occupiedRects.push({ x: tagX, y: tagY, w: tagW, h: tagH });
+
+        // ── Draw tag background ───────────────────────────────────
         ctx.fillStyle = color;
+        ctx.globalAlpha = 0.88;
         ctx.beginPath();
-        ctx.roundRect(tagX, tagY, tw + px * 2, tagH, radius);
+        if (ctx.roundRect) {
+          ctx.roundRect(tagX, tagY, tagW, tagH, 2);
+        } else {
+          ctx.rect(tagX, tagY, tagW, tagH);
+        }
         ctx.fill();
+        ctx.globalAlpha = 1.0;
 
         // Tag text
         ctx.fillStyle = "#ffffff";

@@ -329,63 +329,99 @@ async def finalize_lecture(
 
 def draw_annotations_on_image(img_pil, face_boxes):
     from PIL import ImageDraw, ImageFont
-    
+
     annotated = img_pil.copy()
     draw = ImageDraw.Draw(annotated)
-    
+    img_w, img_h = annotated.size
+
     def get_font(size):
-        try:
-            return ImageFont.truetype("arial.ttf", size)
-        except Exception:
-            return ImageFont.load_default()
-            
+        for name in ("arial.ttf", "DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf"):
+            try:
+                return ImageFont.truetype(name, size)
+            except Exception:
+                pass
+        return ImageFont.load_default()
+
+    # Track placed label rects to prevent overlap: list of (x1,y1,x2,y2)
+    occupied: list[tuple] = []
+
+    def rect_overlaps(ax1, ay1, ax2, ay2) -> bool:
+        for (ox1, oy1, ox2, oy2) in occupied:
+            if ax1 < ox2 and ax2 > ox1 and ay1 < oy2 and ay2 > oy1:
+                return True
+        return False
+
     for fb in face_boxes:
         bbox = fb.get("bbox")
         if not bbox or len(bbox) != 4:
             continue
-        x1, y1, x2, y2 = bbox
+        x1, y1, x2, y2 = [int(v) for v in bbox]
         bw = x2 - x1
         bh = y2 - y1
         if bw <= 0 or bh <= 0:
             continue
-            
+
         matched = fb.get("matched", False)
-        # Harmonious colors matching the frontend
         color = (34, 211, 122) if matched else (255, 69, 58)
-        line_width = max(1, min(round(bw / 60), 2))
-        
+        line_width = max(1, min(round(bw / 80), 2))
+
         draw.rectangle([x1, y1, x2, y2], outline=color, width=line_width)
-        
-        student_name = fb.get("student_name")
-        roll_no = fb.get("roll_no")
+
+        roll_no    = fb.get("roll_no") or ""
+        student_name = fb.get("student_name") or ""
         confidence = fb.get("confidence", 0.0)
-        
+
+        # Short label: "R01·87%" for matched, "?" for unknown — keeps width minimal
         if matched:
-            label = f"{roll_no or student_name} {round(confidence * 100)}%"
+            name_part = (roll_no or student_name or "?")[:8]
+            label = f"{name_part}\u00b7{round(confidence * 100)}%"
         else:
-            label = f"Unknown {round(confidence * 100)}%"
-            
-        font_size = max(8, min(round(bw * 0.12), 12))
+            label = "?"
+
+        # Font: tiny — max 8px equivalent in PIL (proportional to face width)
+        font_size = max(6, min(round(bw * 0.08), 9))
         font = get_font(font_size)
-        
+
         try:
-            text_bbox = draw.textbbox((0, 0), label, font=font)
-            tw = text_bbox[2] - text_bbox[0]
-            th = text_bbox[3] - text_bbox[1]
+            tb = draw.textbbox((0, 0), label, font=font)
+            tw = tb[2] - tb[0]
+            th = tb[3] - tb[1]
         except AttributeError:
             tw, th = draw.textsize(label, font=font)
-            
-        px = max(2, round(font_size * 0.3))
-        py = max(1, round(font_size * 0.15))
+
+        px = 2   # fixed 2px horizontal padding
+        py = 1   # fixed 1px vertical padding
+        tag_w = tw + px * 2
         tag_h = th + py * 2
-        
-        tag_y = y1 - tag_h if y1 - tag_h >= 0 else y2
-        tag_x = max(0, min(x1, annotated.width - tw - px * 2))
-        
-        draw.rectangle([tag_x, tag_y, tag_x + tw + px * 2, tag_y + tag_h], fill=color)
+
+        # Find non-overlapping position — prefer above box, shift down if needed
+        tag_x = max(0, min(x1, img_w - tag_w))
+        tag_y = y1 - tag_h  # default: above top edge
+
+        # If off screen, go inside-top of box
+        if tag_y < 0:
+            tag_y = y1 + line_width
+
+        # Nudge down until clear (max 4 attempts)
+        for _ in range(4):
+            if not rect_overlaps(tag_x, tag_y, tag_x + tag_w, tag_y + tag_h):
+                break
+            tag_y += tag_h + 1
+
+        # Last resort: below the face box
+        if rect_overlaps(tag_x, tag_y, tag_x + tag_w, tag_y + tag_h):
+            tag_y = y2 + line_width
+            if tag_y + tag_h > img_h:
+                tag_y = max(0, y1 - tag_h)
+
+        occupied.append((tag_x, tag_y, tag_x + tag_w, tag_y + tag_h))
+
+        draw.rectangle([tag_x, tag_y, tag_x + tag_w, tag_y + tag_h], fill=color)
         draw.text((tag_x + px, tag_y + py), label, fill=(255, 255, 255), font=font)
-        
+
     return annotated
+
+
 
 
 # ─── AI Attendance (parallel, speed-optimized) ─────────────
