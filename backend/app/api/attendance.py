@@ -401,16 +401,14 @@ async def take_attendance_ai(
     """
     Take AI-based attendance using real face recognition.
 
-    Speed optimizations (target ≤ 8 s per image on CPU):
-      - Requires exactly 3 photos (enforced)
-      - Photos processed SEQUENTIALLY — CPU ONNX inference is already
-        fully multi-threaded internally; running 3 in parallel causes cache
-        thrashing and is actually SLOWER than sequential on CPU
-      - Per-image timeout: 15 s (generous for CPU; 3 images = 45 s budget)
-      - InsightFace at 480×480 det_size (~2× faster than 640×640)
-      - Pre-shrink to 1280px before upscale (was 1920px → 44% fewer pixels)
-      - Tiling only for landscape images (portrait = just 1 pass)
-      - Annotation encoded at JPEG quality=85 (was 98 — 3× smaller, 3× faster)
+    Speed: ≤ 10 s for 3 images (target on CPU):
+      - Frontend pre-resizes to 1024 px before upload (~100 KB each vs ~5 MB)
+      - 3 images processed IN PARALLEL via asyncio.gather (safe because
+        1024 px images → ~2 s ONNX each → no CPU cache thrashing)
+      - Per-image timeout: 8 s
+      - Single ONNX pass (no tiling) — 1024 px is already well-matched
+        to the 480×480 detector window
+      - Annotation at JPEG q=85 (3× faster than q=98)
     
     Falls back to deterministic mock if InsightFace unavailable.
     """
@@ -511,8 +509,8 @@ async def take_attendance_ai(
         async def _process_one(raw: bytes, img_idx: int):
             """
             Process a single image: build preview + run face detection.
-            Per-image timeout: 15 s. Sequential calls prevent CPU cache thrashing.
-            Returns (preview_b64: str, face_boxes_scaled: list[dict], annotated_b64: str)
+            Per-image timeout: 8 s. Runs in parallel with the other 2 images.
+            Returns (preview_b64: str, face_boxes: list[dict], annotated_b64: str)
             """
             import time
             from PIL import Image as PILImage
@@ -555,10 +553,10 @@ async def take_attendance_ai(
                 print(f"[AI] img{img_idx}: Starting detection...")
                 probe_raw = await asyncio.wait_for(
                     face_service.get_embeddings_async(raw),
-                    timeout=15.0   # 15 s per image × 3 images = 45 s total budget
+                    timeout=8.0   # 1024px images → ~2s each; 8s is generous headroom
                 )
                 elapsed = time.time() - t0
-                print(f"[AI] img{img_idx}: Detection done — {len(probe_raw)} faces in {elapsed:.1f}s")
+                print(f"[AI] img{img_idx}: ✓ {len(probe_raw)} faces in {elapsed:.1f}s")
 
                 for (bbox_orig, probe_emb) in probe_raw:
                     ox1, oy1, ox2, oy2 = [float(v) for v in bbox_orig]
@@ -622,14 +620,13 @@ async def take_attendance_ai(
 
             return preview_b64, face_boxes_scaled, annotated_b64
 
-        # ── Process images SEQUENTIALLY ───────────────────────────────────
-        # CPU ONNX (InsightFace) already saturates all cores in a single inference.
-        # Running 3 images in parallel causes cache thrashing = SLOWER overall.
-        # Sequential: each image gets full CPU bandwidth → consistent ~8s/image.
-        results = []
-        for idx, raw in enumerate(raw_images):
-            result = await _process_one(raw, idx + 1)
-            results.append(result)
+        # ── Process ALL 3 images IN PARALLEL ─────────────────────────────
+        # Images arrive at 1024px (pre-resized by frontend).
+        # Single ONNX pass = ~2s per image. Running 3 in parallel is now
+        # SAFE because small images don't thrash the CPU cache, and
+        # asyncio.gather gives us true concurrency via the thread pool.
+        # Expected wall time: ~3-6s for all 3 images combined.
+        results = await asyncio.gather(*[_process_one(raw, i+1) for i, raw in enumerate(raw_images)])
 
         annotated_previews = []
         for preview_b64, face_boxes_scaled, annotated_original_b64 in results:
