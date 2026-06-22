@@ -657,18 +657,25 @@ async def take_attendance_ai(
             return preview_b64, face_boxes_scaled, annotated_b64
 
         # ── Process ALL 3 images IN PARALLEL ─────────────────────────────
-        # Images arrive at 1024px (pre-resized by frontend).
-        # Single ONNX pass = ~2s per image. Running 3 in parallel is now
-        # SAFE because small images don't thrash the CPU cache, and
-        # asyncio.gather gives us true concurrency via the thread pool.
-        # Expected wall time: ~3-6s for all 3 images combined.
-        results = await asyncio.gather(*[_process_one(raw, i+1) for i, raw in enumerate(raw_images)])
+        # Each image gets its own model instance from the pool (thread-safe).
+        # return_exceptions=True: if one image fails, the other 2 still complete.
+        results = await asyncio.gather(
+            *[_process_one(raw, i+1) for i, raw in enumerate(raw_images)],
+            return_exceptions=True,
+        )
 
         annotated_previews = []
-        for preview_b64, face_boxes_scaled, annotated_original_b64 in results:
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                # One image errored — don't crash the whole request
+                print(f"[AI] img{i+1}: ⚠ Task failed: {result}")
+                image_previews.append("")
+                image_annotations.append([])
+                annotated_previews.append("")
+                continue
+
+            preview_b64, face_boxes_scaled, annotated_original_b64 = result
             # ALWAYS append to keep lists index-aligned with raw_images.
-            # If annotation failed (empty string), fall back to the plain preview
-            # so slot i always has an image — even if unannotated.
             image_previews.append(preview_b64)
             image_annotations.append(face_boxes_scaled)
             annotated_previews.append(annotated_original_b64 or preview_b64)
