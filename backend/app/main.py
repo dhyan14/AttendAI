@@ -59,14 +59,29 @@ app.add_middleware(
 )
 
 # ── Global exception handler — ensures CORS headers are sent on 500 errors ──
+# FastAPI's CORSMiddleware does NOT wrap exception handler responses, so we
+# must manually inject the Access-Control-Allow-Origin header here.
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     import traceback
     tb = traceback.format_exc()
     print(f"[UNHANDLED ERROR] {request.method} {request.url}\n{tb}")
+
+    # Determine the correct CORS origin to echo back
+    origin = request.headers.get("origin", "")
+    allowed = settings.allowed_origins_list
+    cors_origin = origin if origin in allowed else (allowed[0] if allowed else "*")
+
+    headers = {
+        "Access-Control-Allow-Origin": cors_origin,
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods": "*",
+        "Access-Control-Allow-Headers": "*",
+    }
     return JSONResponse(
         status_code=500,
         content={"detail": str(exc) or "Internal server error"},
+        headers=headers,
     )
 
 app.include_router(auth.router,         prefix="/auth",        tags=["Auth"])
