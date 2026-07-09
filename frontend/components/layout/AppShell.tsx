@@ -155,7 +155,7 @@ function Sidebar({
       {/* Brand */}
       <div className="sidebar-brand">
         <div className="sidebar-brand-icon">
-          <Cpu size={20} color="#060a10" />
+          <Cpu size={18} color="#ffffff" />
         </div>
         <div>
           <div className="sidebar-brand-text">AttendAI</div>
@@ -166,14 +166,14 @@ function Sidebar({
       {/* Role badge */}
       <div style={{ padding: "8px 16px 4px" }}>
         <span style={{
-          fontSize: 9, fontWeight: 700, color: "var(--accent)",
-          background: "var(--accent-dim)",
-          border: "1px solid var(--border-accent)",
+          fontSize: 11, fontWeight: 600, color: "var(--text-secondary)",
+          background: "#f3f4f6",
+          border: "1px solid var(--border)",
           padding: "3px 10px",
-          borderRadius: 99, letterSpacing: 1.2,
-          fontFamily: "'JetBrains Mono', monospace",
+          borderRadius: 99,
+          fontFamily: "inherit",
           textTransform: "uppercase",
-          boxShadow: "0 0 8px rgba(0,212,255,0.15)",
+          letterSpacing: 0.5,
         }}>
           {ROLE_LABEL[role]}
         </span>
